@@ -153,7 +153,6 @@ def run_multisystem(args) -> tuple[Path, Path]:
                     )
                 mask_path = getattr(args, "mask_dir", None)
                 if mask_path is not None:
-                    from pathlib import Path
                     mask_path = Path(mask_path) / MASK_PATHS[system].name
                 else:
                     mask_path = MASK_PATHS[system]
