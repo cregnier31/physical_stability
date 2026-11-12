@@ -14,6 +14,7 @@ import numpy as np
 import xarray as xr
 
 from .diagnostics import compare_n2, compute_n2, summarize_n2
+from .gloens_npy import load_gloens_mean
 from .forecasts import (
     ENDPOINT, SYSTEMS, detect_fields, forecast_store, open_cloudferro,
     prepare_ts, select_day, subset_region,
@@ -73,7 +74,12 @@ def run_multisystem(args) -> tuple[Path, Path]:
     systems = list(dict.fromkeys(name.upper() for name in args.systems))
     if not systems or any(s not in SYSTEMS for s in systems):
         raise ValueError(f"Systems must be among: {SYSTEMS}")
-    if "GLOENS" in systems and not args.gloens_store:
+    npy_dir = getattr(args, "gloens_npy_dir", None)
+    grid_file = getattr(args, "gloens_grid_file", None)
+    npy_mode = bool(npy_dir)
+    if npy_mode and not grid_file:
+        raise ValueError("--gloens-grid-file is required for .npy arrays")
+    if "GLOENS" in systems and not (args.gloens_store or npy_mode):
         raise ValueError(
             "GLOENS needs --gloens-store pointing to a *3D T/S* Zarr store. "
             "eddy_load/gloens_mean.py handles 2D zos only and cannot supply N2."
@@ -84,16 +90,106 @@ def run_multisystem(args) -> tuple[Path, Path]:
     scores = []
     paths: dict[tuple[str, int], Path] = {}
     timestamps: dict[tuple[str, int], str] = {}
+    from contextlib import nullcontext
     for system in systems:
         store = (
-            args.gloens_store if system == "GLOENS"
+            (str(npy_dir) if npy_mode else args.gloens_store) if system == "GLOENS"
             else forecast_store(system, args.init_date)
         )
         overrides = config.get(system, {})
         eos = overrides.get("eos", args.eos)
         if eos not in ("eos80", "teos10"):
             raise ValueError(f"{system}: invalid EOS convention {eos}")
-        with open_cloudferro(store, endpoint=args.endpoint, anonymous=not args.authenticated) as ds:
+        if system == "GLOENS" and npy_mode:
+            if args.gloens_ensemble != "mean":
+                raise ValueError("Precomputed .npy files provide ensemble means, not members")
+            context = nullcontext(None)
+        else:
+            context = open_cloudferro(
+                store, endpoint=args.endpoint, anonymous=not args.authenticated
+            )
+        with context as ds:
+            if system == "GLOENS" and npy_mode:
+                leads = range(args.first_day, min(args.last_day, 28))
+                if not list(leads):
+                    raise ValueError("No GLOENS leads in requested window")
+            else:
+                fields = detect_fields(
+                    ds, system,
+                    **{k: overrides.get(k) for k in
+                       ("temperature", "salinity", "depth", "latitude", "longitude")}
+                )
+                regional = subset_region(
+                    ds, fields, args.lon_min, args.lon_max,
+                    args.lat_min, args.lat_max,
+                )
+                # A model's shorter native forecast does not truncate other systems.
+                selected = select_day(
+                    regional, first_day=args.first_day, last_day=args.last_day
+                )
+                leads = range(args.first_day, args.first_day + selected.sizes["time"])
+            for lead in leads:
+                if system == "GLOENS" and npy_mode:
+                    one = load_gloens_mean(
+                        npy_dir, grid_file, args.init_date, lead,
+                        axis_order=getattr(args, "gloens_axes", "depth,y,x"),
+                    )
+                    fields = detect_fields(
+                        one, system,
+                        **{k: overrides.get(k) for k in
+                           ("temperature", "salinity", "depth", "latitude", "longitude")}
+                    )
+                    one = subset_region(
+                        one, fields, args.lon_min, args.lon_max,
+                        args.lat_min, args.lat_max,
+                    )
+                    # Precomputed mean has no ensemble axis.
+                    standard, options = prepare_ts(
+                        one, fields, system, ensemble="mean"
+                    )
+                else:
+                    one = regional.isel(time=slice(lead, lead + 1))
+                    standard, options = prepare_ts(
+                        one, fields, system, ensemble=args.gloens_ensemble
+                    )
+                n2 = compute_n2(standard, eos=eos, **options)
+                timestamp = str(one["time"].values[0])
+                filename = out / system / f"n2_{system}_{args.init_date}_lead{lead:03d}.nc"
+                filename.parent.mkdir(parents=True, exist_ok=True)
+                xr.Dataset(
+                    {"N2": n2},
+                    attrs={
+                        "source_system": system,
+                        "source_store": store,
+                        "eos_input_convention": eos,
+                        "ensemble_processing": (
+                            "precomputed_50_member_mean" if system == "GLOENS" and npy_mode
+                            else args.gloens_ensemble if system == "GLOENS" else "none"
+                        ),
+                        "valid_time": timestamp,
+                        "lead_index": lead,
+                        "note": "N2 is calculated between fixed T-point depth levels using TEOS-10 GSW",
+                    },
+                ).to_netcdf(filename)
+                paths[(system, lead)] = filename
+                timestamps[(system, lead)] = timestamp
+                scores.append(
+                    {
+                        "system": system, "lead": lead,
+                        "valid_time": timestamp, "source_store": store,
+                        "eos": eos,
+                        "ensemble_processing": (
+                            "precomputed_50_member_mean" if system == "GLOENS" and npy_mode
+                            else args.gloens_ensemble if system == "GLOENS" else "none"
+                        ),
+                        **standalone_summary(n2, args.epsilon),
+                    }
+                )
+                print(f"{system} lead {lead}: {filename}", flush=True)
+            continue
+
+            # Legacy Zarr-only path retained below for reference; not executed.
+            
             fields = detect_fields(
                 ds, system,
                 **{k: overrides.get(k) for k in
@@ -200,11 +296,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--init-date", required=True, help="Forecast initialization YYYYMMDD")
     parser.add_argument("--systems", nargs="+", choices=SYSTEMS, default=list(SYSTEMS))
+    parser.add_argument("--gloens-npy-dir", help="Local CLASS4_scores ensemble-mean .npy directory")
+    parser.add_argument("--gloens-grid-file", help="NetCDF with deptht, nav_lat, nav_lon")
+    parser.add_argument("--gloens-axes", default="depth,y,x",
+                        help="Explicit .npy axis order, e.g. depth,y,x")
     parser.add_argument("--gloens-store", help="S3 path to 3D T/S GLOENS Zarr (not 2DT zos)")
     parser.add_argument("--gloens-ensemble", choices=("mean", "members"), default="mean")
     parser.add_argument("--output", default="stability_results")
     parser.add_argument("--first-day", type=int, default=0)
-    parser.add_argument("--last-day", type=int, default=1, help="Exclusive lead index; default first day")
+    parser.add_argument("--last-day", type=int, default=28, help="Exclusive lead index; GLOENS supports 0..27")
     parser.add_argument("--lon-min", type=float, default=-80.0)
     parser.add_argument("--lon-max", type=float, default=0.0)
     parser.add_argument("--lat-min", type=float, default=20.0)
