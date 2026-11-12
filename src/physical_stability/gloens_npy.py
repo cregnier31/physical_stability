@@ -13,8 +13,9 @@ import xarray as xr
 VARIABLES = ("thetao", "so", "uo", "vo")
 PREFIX = "glo4-ens50_ensmean"
 DEFAULT_GLOENS_GRID = "/data/rd_exchange/cregnier/static/iORCA025_domcfg_v3.1.nc"
+DEFAULT_GLOENS_MESHMASK = "/data/rd_exchange/cregnier/static/iORCA025_meshmask_v3.1_binary.nc"
 
-def _read_grid(grid: xr.Dataset):
+def _read_grid(grid: xr.Dataset, meshmask: xr.Dataset | None = None):
     """Read NEMO T-grid positions and reject horizontally varying z depths."""
     def get(names):
         for name in names:
@@ -26,7 +27,15 @@ def _read_grid(grid: xr.Dataset):
     lon, lon_name = get(("nav_lon", "glamt"))
     if lat.ndim != 2 or lon.shape != lat.shape:
         raise ValueError(f"T-grid coordinates invalid: {lat_name}={lat.shape}, {lon_name}={lon.shape}")
-    depth, depth_name = get(("deptht", "gdept_1d", "gdept_0"))
+    depth_names = ("deptht", "gdept_1d", "nav_lev", "gdept_0")
+    depth_grid = grid if any(name in grid for name in depth_names) else meshmask
+    if depth_grid is None:
+        raise KeyError("No depth coordinates in domain grid; supply a NEMO meshmask with gdept_1d or nav_lev")
+    for name in depth_names:
+        if name in depth_grid:
+            depth = np.asarray(depth_grid[name].squeeze(drop=True).values, dtype=float)
+            depth_name = name
+            break
     if depth.ndim == 3:
         if depth.shape[1:] != lat.shape:
             raise ValueError("3D T-depth shape does not match horizontal T-grid")
@@ -58,8 +67,9 @@ def load_gloens_mean(
 ) -> xr.Dataset:
     """Build one lead with explicit 3D depth/y/x and 2D latitude/longitude.
 
-    Grid NetCDF must contain 1D 'deptht' (metres positive down) and 2D
-    'nav_lat'/'nav_lon' (y,x). If array axes differ, pass --gloens-axes.
+    The domain grid provides horizontal T coordinates. If it has no 1D
+    depths, use gdept_1d/nav_lev from the static iORCA025 meshmask.
+    If array axes differ, pass --gloens-axes.
     """
     dims = tuple(part.strip() for part in axis_order.split(","))
     if len(dims) != 3 or set(dims) != {"depth", "y", "x"}:
@@ -68,7 +78,14 @@ def load_gloens_mean(
     if not grid_path.is_file():
         raise FileNotFoundError(f"GLOENS grid metadata not found: {grid_path}")
     with xr.open_dataset(grid_path) as grid:
-        depth, lat, lon, depth_name = _read_grid(grid)
+        if any(name in grid for name in ("deptht", "gdept_1d", "nav_lev", "gdept_0")):
+            depth, lat, lon, depth_name = _read_grid(grid)
+        else:
+            mesh_path = Path(DEFAULT_GLOENS_MESHMASK)
+            if not mesh_path.is_file():
+                raise FileNotFoundError(f"GLOENS vertical grid requires meshmask: {mesh_path}")
+            with xr.open_dataset(mesh_path) as mesh:
+                depth, lat, lon, depth_name = _read_grid(grid, meshmask=mesh)
     if depth.size < 2 or not np.all(np.diff(depth) > 0) or depth[0] < 0:
         raise ValueError("Depth levels must be increasing, positive-down metres")
     sizes = {"depth": len(depth), "y": lat.shape[0], "x": lat.shape[1]}
