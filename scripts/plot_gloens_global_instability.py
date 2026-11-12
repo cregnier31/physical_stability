@@ -34,10 +34,12 @@ def main() -> None:
     p.add_argument("--mask-file", default=str(MASK_PATHS["GLOENS"]))
     p.add_argument("--epsilon", type=float, default=1e-8, help="Instability when N² < -epsilon, s^-2")
     p.add_argument("--chunk-y", type=int, default=16)
-    p.add_argument("--color-max", type=float, default=10.0, help="Upper plotted percentage")
+    p.add_argument("--map-type", choices=("minimum-n2", "frequency"), default="minimum-n2", help="Signed minimum N² or percentage of unstable layers")
+    p.add_argument("--color-max", type=float, default=100.0, help="Upper plotted percentage for frequency map")
+    p.add_argument("--n2-limit", type=float, default=1e-6, help="Symmetric colorbar range for minimum N² (s^-2)")
     p.add_argument("--output-prefix", default=None)
     args = p.parse_args()
-    if args.epsilon < 0 or not np.isfinite(args.epsilon) or args.chunk_y < 1 or args.color_max <= 0:
+    if args.epsilon < 0 or not np.isfinite(args.epsilon) or args.chunk_y < 1 or args.color_max <= 0 or args.n2_limit <= 0:
         p.error("epsilon must be finite and nonnegative; chunk-y and color-max must be positive")
 
     ds = load_gloens_mean(
@@ -86,7 +88,7 @@ def main() -> None:
     prefix = args.output_prefix or f"imgs/gloens_instability_{args.init_date}_lead{args.lead:03d}"
     Path(prefix).parent.mkdir(parents=True, exist_ok=True)
     nc_path = Path(prefix + ".nc")
-    png_path = Path(prefix + ".png")
+    png_path = Path(prefix + f"_{args.map_type}.png")
     output = xr.Dataset(
         {
             "unstable_fraction_percent": (("y", "x"), fraction, {"units": "%"}),
@@ -111,19 +113,31 @@ def main() -> None:
     fig = plt.figure(figsize=(16, 8.5), facecolor="white")
     ax = fig.add_subplot(111, projection=ccrs.Robinson())
     ax.set_global()
-    cmap = plt.get_cmap("YlOrRd").copy()
+    if args.map_type == "minimum-n2":
+        field = minimum_n2
+        cmap = plt.get_cmap("RdBu").copy()
+        vmin, vmax = -args.n2_limit, args.n2_limit
+        colorbar_label = "Minimum water-column N² (s⁻²); negative = unstable"
+        colorbar_extend = "both"
+    else:
+        field = fraction
+        cmap = plt.get_cmap("YlOrRd").copy()
+        vmin, vmax = 0, args.color_max
+        colorbar_label = f"Valid vertical layers with N² < -{args.epsilon:g} s⁻² (%)"
+        colorbar_extend = "max" if args.color_max < 100 else "neither"
     cmap.set_bad((1, 1, 1, 0))
     im = ax.pcolormesh(
-        lon, lat, np.ma.masked_invalid(fraction),
+        lon, lat, np.ma.masked_invalid(field),
         transform=ccrs.PlateCarree(), shading="auto",
-        cmap=cmap, vmin=0, vmax=args.color_max, rasterized=True, zorder=1,
+        cmap=cmap, vmin=vmin, vmax=vmax, rasterized=True, zorder=1,
     )
     ax.add_feature(cfeature.LAND, facecolor="#dedede", edgecolor="none", zorder=3)
     ax.coastlines(resolution="110m", linewidth=0.5, color="#555555", zorder=4)
     ax.gridlines(linewidth=0.4, color="gray", alpha=0.4, linestyle="--")
-    bar = fig.colorbar(im, ax=ax, orientation="horizontal", pad=0.045, shrink=0.72, extend="max")
-    bar.set_label(f"Valid vertical layers with N² < -{args.epsilon:g} s⁻² (%)")
-    ax.set_title(f"GLOENS | Global static instability | {args.init_date} | lead {args.lead}", fontsize=16, pad=18)
+    bar = fig.colorbar(im, ax=ax, orientation="horizontal", pad=0.045, shrink=0.72, extend=colorbar_extend)
+    bar.set_label(colorbar_label)
+    title = "Minimum N²" if args.map_type == "minimum-n2" else "Vertical instability frequency"
+    ax.set_title(f"GLOENS | Global {title} | {args.init_date} | lead {args.lead}", fontsize=16, pad=18)
     fig.savefig(png_path, dpi=220, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     total = int(valid_count.sum())
