@@ -14,7 +14,7 @@ import numpy as np
 import xarray as xr
 
 from .diagnostics import compare_n2, compute_n2, summarize_n2
-from .gloens_npy import load_gloens_mean
+from .gloens_npy import DEFAULT_GLOENS_GRID, load_gloens_mean
 from .forecasts import (
     ENDPOINT, SYSTEMS, detect_fields, forecast_store, open_cloudferro,
     prepare_ts, select_day, subset_region,
@@ -243,7 +243,8 @@ def main(argv=None):
     parser.add_argument("--init-date", required=True, help="Forecast initialization YYYYMMDD")
     parser.add_argument("--systems", nargs="+", choices=SYSTEMS, default=list(SYSTEMS))
     parser.add_argument("--gloens-npy-dir", help="Local CLASS4_scores ensemble-mean .npy directory")
-    parser.add_argument("--gloens-grid-file", help="NetCDF with deptht, nav_lat, nav_lon")
+    parser.add_argument("--gloens-grid-file", default=DEFAULT_GLOENS_GRID,
+                        help="NEMO domain_cfg file (default: iORCA025_domcfg_v3.1.nc)")
     parser.add_argument("--gloens-axes", default="depth,y,x",
                         help="Explicit .npy axis order, e.g. depth,y,x")
     parser.add_argument("--gloens-store", help="S3 path to 3D T/S GLOENS Zarr (not 2DT zos)")
