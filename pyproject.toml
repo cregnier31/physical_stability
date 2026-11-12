@@ -11,9 +11,11 @@ dependencies = ["numpy>=1.24", "xarray>=2023.1", "gsw>=3.6", "netCDF4>=1.6"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+cloud = ["s3fs>=2023.1", "zarr>=2.15", "dask[array]>=2023.1"]
 
 [project.scripts]
 physical-stability = "physical_stability.cli:main"
+physical-stability-multisystem = "physical_stability.multisystem:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
