@@ -38,7 +38,7 @@ def test_shape_validation(tmp_path):
         },
     ).to_netcdf(grid_path)
     for var in ("thetao", "so"):
-        np.save(filename(tmp_path, var, 0, "20241205"), np.ones((2, 2, 2)))
+        np.save(filename(tmp_path, var, 0, "20241205"), np.ones((3, 2, 2)))
     with pytest.raises(ValueError, match="shape"):
         load_gloens_mean(tmp_path, grid_path, "20241205", 0, axis_order="y,x,depth")
     with pytest.raises(ValueError, match="lead"):
