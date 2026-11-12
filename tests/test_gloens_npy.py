@@ -43,3 +43,31 @@ def test_shape_validation(tmp_path):
         load_gloens_mean(tmp_path, grid_path, "20241205", 0, axis_order="y,x,depth")
     with pytest.raises(ValueError, match="lead"):
         filename(tmp_path, "so", 28, "20241205")
+
+
+def test_nemo_domcfg_aliases(tmp_path):
+    from physical_stability.gloens_npy import _read_grid
+    grid = xr.Dataset(
+        {
+            "gdept_1d": (("time_counter", "z"), [[[0., 10., 30.]]][0]),
+            "gphit": (("time_counter", "y", "x"), np.full((1, 2, 2), 45.)),
+            "glamt": (("time_counter", "y", "x"), np.full((1, 2, 2), -30.)),
+        }
+    )
+    depth, lat, lon, name = _read_grid(grid)
+    assert name == "gdept_1d"
+    assert depth.shape == (3,)
+    assert lat.shape == lon.shape == (2, 2)
+
+
+def test_reject_horizontally_varying_depth():
+    from physical_stability.gloens_npy import _read_grid
+    depth = np.broadcast_to(np.array([0., 10., 30.])[:, None, None], (3, 2, 2)).copy()
+    depth[1, 1, 1] = 11.
+    grid = xr.Dataset({
+        "gdept_0": (("z", "y", "x"), depth),
+        "gphit": (("y", "x"), np.full((2, 2), 45.)),
+        "glamt": (("y", "x"), np.full((2, 2), -30.)),
+    })
+    with pytest.raises(ValueError, match="varies horizontally"):
+        _read_grid(grid)

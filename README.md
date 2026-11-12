@@ -188,3 +188,46 @@ The loader assumes one daily lead increment after the initialization
 date. Confirm this convention from the CLASS4 production workflow before
 interpreting cross-system valid-time comparisons. This code has not
 verified the contents or array dimensions of the private local directory.
+
+
+### GLOENS iORCA025 grid
+
+The default grid for the precomputed GLOENS ensemble-mean files is now
+`/data/rd_exchange/cregnier/static/iORCA025_domcfg_v3.1.nc`.
+The reader recognizes NEMO domain-configuration variables
+`gdept_1d` (or `deptht`) and T-point coordinates `gphit/glamt`
+(or `nav_lat/nav_lon`). A horizontally varying `gdept_0` is rejected
+rather than collapsed to a false 1D depth profile. The actual private
+file has not been opened here: verify its metadata, T/S axis order and
+spatial shape on the compute environment.
+
+For example, use `--gloens-npy-dir /sortref/calval/CLASS4_scores`
+and omit `--gloens-grid-file` to use the default, or explicitly pass
+another grid path.
+
+
+### Static T-grid masks for all systems
+
+The multisystem CLI now applies a static T-point wet mask **before**
+calculating N², using these default files in
+`/data/rd_exchange/cregnier/static/`:
+
+- GLOW: `mask_GLOW.nc`
+- GLONET: `mask_GLONET.nc`
+- GLO12: `mask_GL012.nc` (note the file spelling `GL012`)
+- GLOENS: `iORCA025_meshmask_v3.1_binary.nc`
+
+The tool detects a binary `tmask`, `mask`, `mask_thetao`,
+`wet_mask`, `wet` or `tmaskutil` variable, removes singleton
+dimensions, and subsets its native grid using the same geographic
+window as the forecast. It fails on incompatible shapes or non-binary
+values instead of silently treating land as ocean. A 3D T mask is
+preferred: a 2D mask cannot describe the wet/dry structure at depth.
+Mask variable names and actual dimensions have not yet been verified
+against the private NetCDF files. To inspect only raw T/S validity
+without these masks, pass `--no-static-masks` explicitly.
+
+`allmeshes.nc` is available as a potential future source of grid
+metrics for volume-weighted comparisons, but it is **not yet used**
+for weighting or cross-grid remapping. Current summary fractions are
+unweighted grid-cell fractions.

@@ -141,7 +141,7 @@ def test_pipeline_with_synthetic_zarr_store(monkeypatch, tmp_path):
         output=str(tmp_path), first_day=0, last_day=1,
         lon_min=-80., lon_max=-50., lat_min=20., lat_max=40.,
         endpoint="unused", authenticated=False, eos="eos80",
-        config=None, epsilon=1e-8,
+        config=None, epsilon=1e-8, no_static_masks=True,
     )
     summary, comparisons = run_multisystem(args)
     assert summary.is_file()

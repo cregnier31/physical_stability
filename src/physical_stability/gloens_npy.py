@@ -12,6 +12,31 @@ import xarray as xr
 
 VARIABLES = ("thetao", "so", "uo", "vo")
 PREFIX = "glo4-ens50_ensmean"
+DEFAULT_GLOENS_GRID = "/data/rd_exchange/cregnier/static/iORCA025_domcfg_v3.1.nc"
+
+def _read_grid(grid: xr.Dataset):
+    """Read NEMO T-grid positions and reject horizontally varying z depths."""
+    def get(names):
+        for name in names:
+            if name in grid:
+                return np.asarray(grid[name].squeeze(drop=True).values, dtype=float), name
+        raise KeyError(f"Grid missing all of {names}")
+
+    lat, lat_name = get(("nav_lat", "gphit"))
+    lon, lon_name = get(("nav_lon", "glamt"))
+    if lat.ndim != 2 or lon.shape != lat.shape:
+        raise ValueError(f"T-grid coordinates invalid: {lat_name}={lat.shape}, {lon_name}={lon.shape}")
+    depth, depth_name = get(("deptht", "gdept_1d", "gdept_0"))
+    if depth.ndim == 3:
+        if depth.shape[1:] != lat.shape:
+            raise ValueError("3D T-depth shape does not match horizontal T-grid")
+        if not np.allclose(depth, depth[:, :1, :1], rtol=0, atol=1e-4, equal_nan=True):
+            raise ValueError("gdept_0 varies horizontally; 1D fixed-z N2 is invalid")
+        depth = depth[:, 0, 0]
+    if depth.ndim != 1:
+        raise ValueError(f"{depth_name} must be 1D or horizontally uniform 3D")
+    return depth, lat, lon, depth_name
+
 
 
 def filename(directory: str | Path, variable: str, lead: int, init_date: str) -> Path:
@@ -43,14 +68,7 @@ def load_gloens_mean(
     if not grid_path.is_file():
         raise FileNotFoundError(f"GLOENS grid metadata not found: {grid_path}")
     with xr.open_dataset(grid_path) as grid:
-        for key in ("deptht", "nav_lat", "nav_lon"):
-            if key not in grid:
-                raise KeyError(f"Grid file requires '{key}'")
-        depth = np.asarray(grid["deptht"].values)
-        lat = np.asarray(grid["nav_lat"].values)
-        lon = np.asarray(grid["nav_lon"].values)
-    if depth.ndim != 1 or lat.ndim != 2 or lon.shape != lat.shape:
-        raise ValueError("Grid must contain 1D deptht and matching 2D nav_lat/nav_lon")
+        depth, lat, lon, depth_name = _read_grid(grid)
     if depth.size < 2 or not np.all(np.diff(depth) > 0) or depth[0] < 0:
         raise ValueError("Depth levels must be increasing, positive-down metres")
     sizes = {"depth": len(depth), "y": lat.shape[0], "x": lat.shape[1]}
@@ -90,6 +108,7 @@ def load_gloens_mean(
             "lead_index": lead,
             "time_assumption": "One daily lead increment from initialization date",
             "grid_source": str(grid_path),
+            "depth_source": depth_name,
         },
     )
     return ds.expand_dims(time=[valid_time])

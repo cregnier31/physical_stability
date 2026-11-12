@@ -14,7 +14,8 @@ import numpy as np
 import xarray as xr
 
 from .diagnostics import compare_n2, compute_n2, summarize_n2
-from .gloens_npy import load_gloens_mean
+from .gloens_npy import DEFAULT_GLOENS_GRID, load_gloens_mean
+from .masks import MASK_PATHS, wet_mask_for_ts, mask_ts_pairs, region_indices
 from .forecasts import (
     ENDPOINT, SYSTEMS, detect_fields, forecast_store, open_cloudferro,
     prepare_ts, select_day, subset_region,
@@ -150,6 +151,36 @@ def run_multisystem(args) -> tuple[Path, Path]:
                     standard, options = prepare_ts(
                         one, fields, system, ensemble=args.gloens_ensemble
                     )
+                mask_path = getattr(args, "mask_dir", None)
+                if mask_path is not None:
+                    mask_path = Path(mask_path) / MASK_PATHS[system].name
+                else:
+                    mask_path = MASK_PATHS[system]
+                if getattr(args, "no_static_masks", False):
+                    pass
+                else:
+                    indices = region_indices(
+                        one if system == "GLOENS" and npy_mode else ds,
+                        fields, args.lon_min, args.lon_max,
+                        args.lat_min, args.lat_max,
+                    )
+                    # In the local GLOENS path, 'one' is already cropped.
+                    # Its original global grid is required to locate the mask.
+                    if system == "GLOENS" and npy_mode:
+                        full_grid = load_gloens_mean(
+                            npy_dir, grid_file, args.init_date, lead,
+                            axis_order=getattr(args, "gloens_axes", "depth,y,x"),
+                            include_currents=False,
+                        )
+                        indices = region_indices(
+                            full_grid, fields, args.lon_min, args.lon_max,
+                            args.lat_min, args.lat_max,
+                        )
+                    wet = wet_mask_for_ts(
+                        mask_path, standard["thetao"],
+                        horizontal_indices=indices,
+                    )
+                    standard = mask_ts_pairs(standard, wet)
                 n2 = compute_n2(standard, eos=eos, **options)
                 timestamp = str(one["time"].values[0])
                 filename = out / system / f"n2_{system}_{args.init_date}_lead{lead:03d}.nc"
@@ -242,8 +273,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--init-date", required=True, help="Forecast initialization YYYYMMDD")
     parser.add_argument("--systems", nargs="+", choices=SYSTEMS, default=list(SYSTEMS))
+    parser.add_argument("--mask-dir", help="Override directory of model static masks")
+    parser.add_argument("--no-static-masks", action="store_true", help="Disable masks (diagnostic only)")
     parser.add_argument("--gloens-npy-dir", help="Local CLASS4_scores ensemble-mean .npy directory")
-    parser.add_argument("--gloens-grid-file", help="NetCDF with deptht, nav_lat, nav_lon")
+    parser.add_argument("--gloens-grid-file", default=DEFAULT_GLOENS_GRID,
+                        help="NEMO domain_cfg file (default: iORCA025_domcfg_v3.1.nc)")
     parser.add_argument("--gloens-axes", default="depth,y,x",
                         help="Explicit .npy axis order, e.g. depth,y,x")
     parser.add_argument("--gloens-store", help="S3 path to 3D T/S GLOENS Zarr (not 2DT zos)")
