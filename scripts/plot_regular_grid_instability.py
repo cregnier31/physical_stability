@@ -60,7 +60,16 @@ def diagnose_store(store, endpoint, authenticated):
             except Exception as exc:
                 print(f"S3 listing {target} failed: {type(exc).__name__}: {exc}", flush=True)
     finally:
-        fs.close()
+        # s3fs versions differ: S3FileSystem does not universally expose close().
+        session = getattr(fs, "_s3", None)
+        if session is not None:
+            import inspect
+            close = getattr(session, "close", None)
+            if close is not None:
+                result = close()
+                if inspect.isawaitable(result):
+                    import asyncio
+                    asyncio.run(result)
 
 
 def calculate(system, args):
