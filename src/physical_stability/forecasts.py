@@ -108,8 +108,8 @@ def detect_fields(
         raise ValueError(f"{system}: T and S dims differ; collocate them before N2")
     if "ens" in ds[t].dims and system != "GLOENS":
         raise ValueError("Unexpected ensemble dimension in a deterministic/AI store")
-    if system == "GLOENS" and "ens" not in ds[t].dims:
-        raise ValueError("GLOENS: 3D T/S must contain an 'ens' dimension")
+    if system == "GLOENS" and "ens" not in ds[t].dims and ds.attrs.get("ensemble_processing") != "precomputed_50_member_mean":
+        raise ValueError("GLOENS without ens must be a verified precomputed ensemble mean")
     return FieldNames(t, s, z, la, lo)
 
 
@@ -181,7 +181,7 @@ def prepare_ts(
     system = system.upper()
     t = ds[fields.temperature]
     s = ds[fields.salinity]
-    if system == "GLOENS":
+    if system == "GLOENS" and "ens" in ds.dims:
         if ds.sizes["ens"] != 50:
             raise ValueError(f"Expected 50 GLOENS members; found {ds.sizes['ens']}")
         if ensemble == "mean":
