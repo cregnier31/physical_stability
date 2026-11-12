@@ -21,6 +21,7 @@ def wet_mask_for_ts(
     path: str | Path,
     ts: xr.DataArray,
     mask_variable: str | None = None,
+    horizontal_indices: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> xr.DataArray:
     """Return a boolean mask on canonical (deptht,y,x) T points.
 
@@ -39,6 +40,9 @@ def wet_mask_for_ts(
         if mask.ndim not in (2, 3):
             raise ValueError(f"{name} has {mask.ndim} dimensions; expected 2D/3D T mask")
         target = (ts.sizes["deptht"], ts.sizes["y"], ts.sizes["x"])
+        if horizontal_indices is not None:
+            yi, xi = horizontal_indices
+            mask = mask.isel({mask.dims[-2]: np.asarray(yi), mask.dims[-1]: np.asarray(xi)})
         if mask.ndim == 2 and mask.shape != target[1:]:
             raise ValueError(f"{name}: horizontal shape {mask.shape} != {target[1:]}")
         if mask.ndim == 3 and mask.shape != target:
