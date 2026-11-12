@@ -82,6 +82,10 @@ def compare_n2(reference: xr.DataArray, prediction: xr.DataArray, epsilon: float
     if not np.isfinite(epsilon) or epsilon < 0:
         raise ValueError("epsilon must be nonnegative and finite")
     ref, ai = xr.align(reference, prediction, join="exact")
+    if ref.dims != ai.dims:
+        raise ValueError("N2 arrays must have identical dimension ordering; transpose first")
+    if ref.shape != ai.shape:
+        raise ValueError("N2 arrays must have identical shapes")
     valid = np.isfinite(ref) & np.isfinite(ai)
     ref_unstable = (ref < -epsilon) & valid
     ai_unstable = (ai < -epsilon) & valid
