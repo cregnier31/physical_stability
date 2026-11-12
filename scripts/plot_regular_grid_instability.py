@@ -48,10 +48,34 @@ def mask_for_chunk(grid: xr.Dataset, nz: int, ny: int, nx: int, y0: int, y1: int
     return part.astype(bool), name
 
 
+def diagnose_store(store, endpoint, authenticated):
+    """List a few S3 entries to distinguish missing paths from Zarr issues."""
+    import s3fs
+    fs = s3fs.S3FileSystem(anon=not authenticated, client_kwargs={"endpoint_url": endpoint})
+    try:
+        for target in (store, store.rsplit("/", 1)[0]):
+            try:
+                entries = fs.ls(target, detail=False)[:12]
+                print(f"S3 listing {target}: {entries}", flush=True)
+            except Exception as exc:
+                print(f"S3 listing {target} failed: {type(exc).__name__}: {exc}", flush=True)
+    finally:
+        fs.close()
+
+
 def calculate(system, args):
     store = forecast_store(system, args.init_date)
     with ExitStack() as stack:
-        ds = stack.enter_context(open_cloudferro(store, endpoint=args.endpoint, anonymous=not args.authenticated))
+        print(f"Opening {system}: s3://{store} via {args.endpoint}", flush=True)
+        try:
+            ds = stack.enter_context(open_cloudferro(store, endpoint=args.endpoint, anonymous=not args.authenticated))
+        except Exception as exc:
+            print(f"Cannot open {system} forecast: {type(exc).__name__}: {exc}", flush=True)
+            diagnose_store(store, args.endpoint, args.authenticated)
+            raise RuntimeError(
+                f"{system}: failed opening s3://{store}; check listing above for the correct "
+                "initialization-date path, permissions, or Zarr layout."
+            ) from exc
         fields = detect_fields(ds, system)
         if args.lead >= ds.sizes["time"]:
             raise ValueError(f"{system}: lead {args.lead} exceeds available time dimension")
