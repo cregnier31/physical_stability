@@ -68,3 +68,29 @@ def mask_ts_pairs(ds: xr.Dataset, wet: xr.DataArray) -> xr.Dataset:
         thetao=ds["thetao"].where(wet),
         so=ds["so"].where(wet),
     )
+
+def region_indices(
+    ds: xr.Dataset, fields, lon_min: float, lon_max: float,
+    lat_min: float, lat_max: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reproduce forecast regional extraction as positional indices."""
+    lat = np.asarray(ds[fields.latitude].values)
+    lon = ((np.asarray(ds[fields.longitude].values) + 180) % 360) - 180
+    if lat.ndim == lon.ndim == 1:
+        yi = np.flatnonzero((lat >= lat_min) & (lat <= lat_max))
+        xi = np.flatnonzero((lon >= lon_min) & (lon <= lon_max))
+    elif lat.ndim == lon.ndim == 2 and lat.shape == lon.shape:
+        found = np.argwhere(
+            (lat >= lat_min) & (lat <= lat_max) &
+            (lon >= lon_min) & (lon <= lon_max)
+        )
+        if not found.size:
+            raise ValueError("No mask grid cells in geographic region")
+        low, high = found.min(axis=0), found.max(axis=0)
+        yi = np.arange(low[0], high[0] + 1)
+        xi = np.arange(low[1], high[1] + 1)
+    else:
+        raise ValueError("Unsupported geographic grid")
+    if not yi.size or not xi.size:
+        raise ValueError("No mask grid cells in geographic region")
+    return yi, xi
