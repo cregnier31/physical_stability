@@ -217,6 +217,7 @@ def prepare_ts(
 
     lat_c = lat.rename({yd: "y", xd: "x"} if lat.ndim == 2 else {yd: "y"})
     lon_c = lon.rename({yd: "y", xd: "x"} if lon.ndim == 2 else {xd: "x"})
+    lon_c = _lon_180(lon_c)
     lat_grid, lon_grid = xr.broadcast(lat_c, lon_c)
     lat_grid = lat_grid.transpose("y", "x")
     lon_grid = lon_grid.transpose("y", "x")
