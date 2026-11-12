@@ -83,7 +83,8 @@ def main() -> None:
     fraction = np.full((ny, nx), np.nan, dtype=np.float32)
     np.divide(100.0 * unstable_count, valid_count, out=fraction, where=valid_count > 0)
 
-    prefix = args.output_prefix or f"gloens_instability_{args.init_date}_lead{args.lead:03d}"
+    prefix = args.output_prefix or f"imgs/gloens_instability_{args.init_date}_lead{args.lead:03d}"
+    Path(prefix).parent.mkdir(parents=True, exist_ok=True)
     nc_path = Path(prefix + ".nc")
     png_path = Path(prefix + ".png")
     output = xr.Dataset(
