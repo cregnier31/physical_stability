@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "physical-stability"
+version = "0.1.0"
+description = "NEMO vs AI ocean static stability diagnostics"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "xarray>=2023.1", "gsw>=3.6", "netCDF4>=1.6"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+physical-stability = "physical_stability.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
