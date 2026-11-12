@@ -85,7 +85,10 @@ def detect_fields(
     system = system.upper()
     if system not in SYSTEMS:
         raise ValueError(f"Unknown system {system}; choose {SYSTEMS}")
-    lon_default, lat_default = (\n        ("longitude", "latitude") if system == "GLOENS"\n        else MODEL_STORES[system][1:]\n    )
+    lon_default, lat_default = (
+        ("longitude", "latitude") if system == "GLOENS"
+        else MODEL_STORES[system][1:]
+    )
     t = _choose(ds, TEMPERATURE_NAMES, "temperature", temperature)
     s = _choose(ds, SALINITY_NAMES, "salinity", salinity)
     z = _choose(ds, DEPTH_NAMES, "depth", depth)
