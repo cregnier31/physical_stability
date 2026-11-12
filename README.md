@@ -188,3 +188,19 @@ The loader assumes one daily lead increment after the initialization
 date. Confirm this convention from the CLASS4 production workflow before
 interpreting cross-system valid-time comparisons. This code has not
 verified the contents or array dimensions of the private local directory.
+
+
+### GLOENS iORCA025 grid
+
+The default grid for the precomputed GLOENS ensemble-mean files is now
+`/data/rd_exchange/cregnier/static/iORCA025_domcfg_v3.1.nc`.
+The reader recognizes NEMO domain-configuration variables
+`gdept_1d` (or `deptht`) and T-point coordinates `gphit/glamt`
+(or `nav_lat/nav_lon`). A horizontally varying `gdept_0` is rejected
+rather than collapsed to a false 1D depth profile. The actual private
+file has not been opened here: verify its metadata, T/S axis order and
+spatial shape on the compute environment.
+
+For example, use `--gloens-npy-dir /sortref/calval/CLASS4_scores`
+and omit `--gloens-grid-file` to use the default, or explicitly pass
+another grid path.
