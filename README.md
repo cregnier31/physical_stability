@@ -37,3 +37,113 @@ pytest -q
 - A positive N² everywhere is not sufficient for correct internal-wave physics: compare pycnocline strength/depth and vertical N² profiles too.
 - Avoid applying the EOS-80 conversion twice to TEOS-10 output.
 - Outputs may be memory-intensive for large full-domain grids; chunk processing will be needed for production-scale runs.
+
+
+## Multi-system CloudFerro comparison
+
+This workflow follows the remote-store conventions in the
+[eddy-tracking-intercomparison code](https://github.com/cregnier31/eddy-tracking-intercomparison/tree/feature/gloens-ensemble-zos-clean):
+`eddy_detect/zarr_forecasts.py` (GLONET/GLOW/GLO12 paths) and
+`eddy_load/gloens_mean.py` (GLOENS anonymous S3 access, 50 ensemble members
+and curvilinear 2D geographic coordinates).
+
+**Important:** These original scripts process sea-surface height (`zos`).
+N² is *not* calculated from SSH: the stability tool requires a store with
+3D temperature and salinity on T-point z levels. Availability and names of
+those fields in the live Zarr stores have **not** been verified; the reader
+will raise a descriptive exception if they are missing.
+
+Install optional CloudFerro/Zarr dependencies:
+
+```bash
+pip install -e '.[cloud,test]'
+```
+
+To analyze the first lead day of GLONET, GLOW and GLO12 in the North Atlantic:
+
+```bash
+physical-stability-multisystem \
+  --init-date 20260101 \
+  --systems GLONET GLOW GLO12 \
+  --first-day 0 --last-day 1 \
+  --lon-min -80 --lon-max 0 --lat-min 20 --lat-max 65 \
+  --eos eos80 \
+  --output results
+```
+
+For all four systems, **supply a verified GLOENS store containing 3D T/S**
+rather than the 2DT SSH store:
+
+```bash
+physical-stability-multisystem \
+  --init-date 20260101 \
+  --systems GLONET GLOW GLO12 GLOENS \
+  --gloens-store 's3://YOUR_BUCKET/YOUR_VERIFIED_3D_TS_FORECAST.zarr' \
+  --first-day 0 --last-day 3 \
+  --eos eos80 \
+  --gloens-ensemble mean \
+  --output results
+```
+
+The CloudFerro default endpoint is `https://s3.waw3-1.cloudferro.com`.
+Use `--authenticated` if the store requires configured IAM/environment
+credentials. The code subselects longitude/latitude and one lead day before
+eager GSW calculations. Forecast lead indices are 0-based, and `--last-day`
+is exclusive. A single day is the safe default for initial validation.
+
+### Model-specific field and equation-of-state mapping
+
+If stores use different variable names or EOS conventions, provide a JSON
+configuration file:
+
+```json
+{
+  "GLONET": {"temperature": "thetao", "salinity": "so", "depth": "depth",
+             "eos": "eos80"},
+  "GLOW": {"temperature": "thetao", "salinity": "so", "depth": "depth",
+           "eos": "eos80"},
+  "GLO12": {"temperature": "thetao", "salinity": "so", "depth": "depth",
+             "eos": "eos80"},
+  "GLOENS": {"temperature": "thetao", "salinity": "so", "depth": "depth",
+              "latitude": "latitude", "longitude": "longitude",
+              "eos": "eos80"}
+}
+```
+
+Pass `--config field_mapping.json`. The values above are **examples to
+verify**, not claims about the live Zarr metadata. When the data already
+contain Conservative Temperature and Absolute Salinity, set
+`eos: "teos10"`; otherwise use `eos80` only when the actual fields are
+potential temperature and Practical Salinity. A wrong convention may
+generate false stability conclusions.
+
+### Outputs and interpretation
+
+- `results/<SYSTEM>/n2_<SYSTEM>_<INIT>_leadNNN.nc`: N² and native-grid
+  geographic coordinates at vertical midlevels, with model provenance.
+- `results/n2_multisystem_summary.csv`: per-system, per-lead count and
+  unweighted unstable fraction, mean N², and mean negative N² magnitude.
+- `results/pointwise_comparisons.json`: whether pointwise comparisons
+  against GLO12 were possible and paired-grid-cell metrics where they were.
+- `results/<SYSTEM>/versus_GLO12_leadNNN.nc`: paired differences and masks,
+  **only** if times, dimensions, and physical grids are identical.
+
+No implicit cross-grid interpolation is done. GLOENS has 2D geographic
+coordinates and typically a different grid; GLO12 pointwise comparisons
+are therefore likely to be marked `skipped` until a validated T/S
+remapping stage is added. Remap **temperature and salinity before computing
+N²**, not two precomputed N² fields. Different native-grid unweighted
+fractions should not be interpreted as volume-weighted performance scores.
+
+`--gloens-ensemble mean` computes **N²(mean(T), mean(S))**, respecting
+paired finite T/S ensemble members; this does not equal the ensemble
+mean of member-wise N² because seawater density is nonlinear.
+`--gloens-ensemble members` retains all 50 member N² fields; its overall
+summary pools valid member grid cells. It does not do a one-to-one comparison
+of ensemble members against the single GLO12 field.
+
+The classification threshold `--epsilon` defaults to
+`1e-8 s^-2` only as an illustrative tolerance. Negative N² is a
+potential static instability, not automatic proof of AI failure.
+Additional physical evaluation should compare with observations, surface
+forcing, mixing and the pycnocline's vertical structure.
