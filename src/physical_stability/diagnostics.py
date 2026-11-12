@@ -66,6 +66,10 @@ def compute_n2(
     midpoint = 0.5 * (zz[:-1] + zz[1:])
     coords = {d: T.coords[d] for d in other if d in T.coords}
     coords["depth_mid"] = midpoint
+    # Carry physical positions so identical grid indices cannot mask grid differences.
+    for name, position in ((latitude, lat), (longitude, lon)):
+        if name not in coords and all(d in other for d in position.dims):
+            coords[name] = position
     result = xr.DataArray(
         n2, dims=(*other, "depth_mid"), coords=coords, name="N2",
         attrs={"units": "s-2", "long_name": "Brunt-Vaisala frequency squared"},
@@ -81,6 +85,14 @@ def compare_n2(reference: xr.DataArray, prediction: xr.DataArray, epsilon: float
     """
     if not np.isfinite(epsilon) or epsilon < 0:
         raise ValueError("epsilon must be nonnegative and finite")
+    for name in ("nav_lat", "nav_lon"):
+        if (name in reference.coords) != (name in prediction.coords):
+            raise ValueError(f"Both N2 inputs must carry the same {name} coordinate")
+        if name in reference.coords:
+            a = np.asarray(reference.coords[name].values)
+            b = np.asarray(prediction.coords[name].values)
+            if a.shape != b.shape or not np.allclose(a, b, atol=1e-6, rtol=0, equal_nan=True):
+                raise ValueError(f"Physical grids differ at {name}; regrid T/S before comparing N2")
     ref, ai = xr.align(reference, prediction, join="exact")
     if ref.dims != ai.dims:
         raise ValueError("N2 arrays must have identical dimension ordering; transpose first")
