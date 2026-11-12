@@ -167,30 +167,68 @@ def select_day(
 def prepare_ts(
     ds: xr.Dataset, fields: FieldNames, system: str, ensemble: str = "mean",
 ) -> tuple[xr.Dataset, dict]:
-    """Normalize 3D T/S names, while preserving original coordinates/dimensions.
+    """Canonicalize T/S to time, [ens,] deptht, y, x for GSW.
 
-    'mean' forms mean(T), mean(S) before EOS. For ensemble mean(N2), use
-    'members' to retain ensemble members and summarize N2 afterwards.
+    GLOENS mean computes mean(T) and mean(S) over the paired finite members.
+    This is *not* equivalent to mean(N2), because the EOS is nonlinear.
+    Ensemble member mode retains every member for individual N2 estimates.
     """
     if ensemble not in ("mean", "members"):
         raise ValueError("ensemble must be 'mean' or 'members'")
     system = system.upper()
-    t, s = ds[fields.temperature], ds[fields.salinity]
-    if system == "GLOENS" and ensemble == "mean":
+    t = ds[fields.temperature]
+    s = ds[fields.salinity]
+    if system == "GLOENS":
         if ds.sizes["ens"] != 50:
             raise ValueError(f"Expected 50 GLOENS members; found {ds.sizes['ens']}")
-        # Preserve the same member mask for T and S; do not mix unpaired members.
-        paired = np.isfinite(t) & np.isfinite(s)
-        t = t.where(paired).mean("ens", skipna=True)
-        s = s.where(paired).mean("ens", skipna=True)
-    return xr.Dataset(
+        if ensemble == "mean":
+            valid = np.isfinite(t) & np.isfinite(s)
+            t = t.where(valid).mean("ens", skipna=True)
+            s = s.where(valid).mean("ens", skipna=True)
+
+    zd = ds[fields.depth].dims[0]
+    lat = ds[fields.latitude]
+    lon = ds[fields.longitude]
+    if lat.ndim == lon.ndim == 1:
+        yd, xd = lat.dims[0], lon.dims[0]
+        if yd == xd:
+            raise ValueError("Latitude and longitude axes must differ")
+    elif lat.ndim == lon.ndim == 2 and lat.dims == lon.dims:
+        yd, xd = lat.dims
+    else:
+        raise ValueError("Coordinates must be 1D rectilinear or 2D curvilinear")
+
+    if len({zd, yd, xd}) != 3:
+        raise ValueError("Depth and horizontal dimensions must be distinct")
+    if yd not in t.dims or xd not in t.dims:
+        raise ValueError("T/S dimensions do not match coordinate dimensions")
+    rename = {k: v for k, v in ((zd, "deptht"), (yd, "y"), (xd, "x")) if k != v}
+    t = t.rename(rename).reset_coords(drop=True)
+    s = s.rename(rename).reset_coords(drop=True)
+    # Canonical integer grid indices prevent accidental alignment by 1D lat/lon.
+    t = t.assign_coords(y=np.arange(t.sizes["y"]), x=np.arange(t.sizes["x"]))
+    s = s.assign_coords(y=np.arange(s.sizes["y"]), x=np.arange(s.sizes["x"]))
+    if "deptht" in t.coords:
+        t = t.assign_coords(deptht=np.asarray(ds[fields.depth].values))
+        s = s.assign_coords(deptht=np.asarray(ds[fields.depth].values))
+    else:
+        t = t.assign_coords(deptht=np.asarray(ds[fields.depth].values))
+        s = s.assign_coords(deptht=np.asarray(ds[fields.depth].values))
+
+    lat_c = lat.rename({yd: "y", xd: "x"} if lat.ndim == 2 else {yd: "y"})
+    lon_c = lon.rename({yd: "y", xd: "x"} if lon.ndim == 2 else {xd: "x"})
+    lat_grid, lon_grid = xr.broadcast(lat_c, lon_c)
+    lat_grid = lat_grid.transpose("y", "x")
+    lon_grid = lon_grid.transpose("y", "x")
+    canonical = xr.Dataset(
         {"thetao": t, "so": s},
         coords={
-            "deptht": ds[fields.depth].rename({fields.depth: "deptht"})
-                      if fields.depth != "deptht" else ds[fields.depth],
-            "nav_lat": ds[fields.latitude],
-            "nav_lon": ds[fields.longitude],
+            "nav_lat": (("y", "x"), np.asarray(lat_grid.values)),
+            "nav_lon": (("y", "x"), np.asarray(lon_grid.values)),
         },
         attrs={"source_system": system, "ensemble_processing": ensemble},
-    ), {"temperature": "thetao", "salinity": "so", "depth": "deptht",
-        "latitude": "nav_lat", "longitude": "nav_lon"}
+    )
+    return canonical, {
+        "temperature": "thetao", "salinity": "so", "depth": "deptht",
+        "latitude": "nav_lat", "longitude": "nav_lon",
+    }
