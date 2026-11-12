@@ -124,10 +124,8 @@ def run_multisystem(args) -> tuple[Path, Path]:
                     args.lat_min, args.lat_max,
                 )
                 # A model's shorter native forecast does not truncate other systems.
-                selected = select_day(
-                    regional, first_day=args.first_day, last_day=args.last_day
-                )
-                leads = range(args.first_day, args.first_day + selected.sizes["time"])
+                stop = min(args.last_day, regional.sizes["time"])
+                leads = range(args.first_day, max(args.first_day, stop))
             for lead in leads:
                 if system == "GLOENS" and npy_mode:
                     one = load_gloens_mean(
@@ -186,58 +184,6 @@ def run_multisystem(args) -> tuple[Path, Path]:
                     }
                 )
                 print(f"{system} lead {lead}: {filename}", flush=True)
-            continue
-
-            # Legacy Zarr-only path retained below for reference; not executed.
-            
-            fields = detect_fields(
-                ds, system,
-                **{k: overrides.get(k) for k in
-                   ("temperature", "salinity", "depth", "latitude", "longitude")}
-            )
-            regional = subset_region(
-                ds, fields, args.lon_min, args.lon_max,
-                args.lat_min, args.lat_max,
-            )
-            selected = select_day(
-                regional, first_day=args.first_day, last_day=args.last_day
-            )
-            for lead in range(args.first_day, args.first_day + selected.sizes["time"]):
-                one = regional.isel(time=slice(lead, lead + 1))
-                standard, options = prepare_ts(
-                    one, fields, system, ensemble=args.gloens_ensemble
-                )
-                n2 = compute_n2(standard, eos=eos, **options)
-                timestamp = str(one["time"].values[0])
-                filename = out / system / f"n2_{system}_{args.init_date}_lead{lead:03d}.nc"
-                filename.parent.mkdir(parents=True, exist_ok=True)
-                xr.Dataset(
-                    {"N2": n2},
-                    attrs={
-                        "source_system": system,
-                        "source_store": store,
-                        "eos_input_convention": eos,
-                        "ensemble_processing": args.gloens_ensemble if system == "GLOENS" else "none",
-                        "valid_time": timestamp,
-                        "lead_index": lead,
-                        "note": "N2 is calculated between fixed T-point depth levels using TEOS-10 GSW",
-                    },
-                ).to_netcdf(filename)
-                paths[(system, lead)] = filename
-                timestamps[(system, lead)] = timestamp
-                scores.append(
-                    {
-                        "system": system, "lead": lead,
-                        "valid_time": timestamp, "source_store": store,
-                        "eos": eos,
-                        "ensemble_processing": (
-                            args.gloens_ensemble if system == "GLOENS" else "none"
-                        ),
-                        **standalone_summary(n2, args.epsilon),
-                    }
-                )
-                print(f"{system} lead {lead}: {filename}", flush=True)
-
     summary_file = out / "n2_multisystem_summary.csv"
     with summary_file.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=SUMMARY_FIELDS)
