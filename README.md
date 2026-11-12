@@ -147,3 +147,44 @@ The classification threshold `--epsilon` defaults to
 potential static instability, not automatic proof of AI failure.
 Additional physical evaluation should compare with observations, surface
 forcing, mixing and the pycnocline's vertical structure.
+
+
+### Precomputed 28-day GLOENS CLASS4 ensemble means (preferred)
+
+The local GLOENS data can be read from
+`/sortref/calval/CLASS4_scores/` with filenames such as
+`glo4-ens50_ensmean_thetao_leadtime_000_20241205.npy` through
+`glo4-ens50_ensmean_thetao_leadtime_027_20241205.npy`.
+Matching `so` is required; `uo` and `vo` are read together when both
+are available, but are not used to compute N².
+
+**Important:** NumPy .npy files do not include geolocation, depth
+coordinates, units or axis labels. Supply a trusted NetCDF grid file with
+1D `deptht` in metres and 2D `nav_lat` and `nav_lon` on (y,x).
+Verify the actual array shape and dimension order before using the tool.
+For example, if each file is ordered (depth,y,x):
+
+```bash
+physical-stability-multisystem \
+  --init-date 20241205 \
+  --systems GLONET GLOW GLO12 GLOENS \
+  --gloens-npy-dir /sortref/calval/CLASS4_scores \
+  --gloens-grid-file /path/to/verified_gloens_grid.nc \
+  --gloens-axes depth,y,x \
+  --first-day 0 --last-day 28 \
+  --eos eos80 --output results
+```
+
+This analyzes every available GLOENS lead from 000 to 027. Shorter
+GLONET/GLOW/GLO12 forecasts stop at their actual Zarr time length
+without truncating GLOENS. GLOW is expected to have 9 days; the others
+are checked against their actual store metadata rather than assuming 10.
+Pointwise comparisons are attempted only for leads available in both
+models, matching valid times, and identical geographic grids. The
+GLOENS mean fields are already averaged over 50 members, so no ensemble
+reduction is performed again.
+
+The loader assumes one daily lead increment after the initialization
+date. Confirm this convention from the CLASS4 production workflow before
+interpreting cross-system valid-time comparisons. This code has not
+verified the contents or array dimensions of the private local directory.
