@@ -68,7 +68,7 @@ def mask_at_points(path, yy, xx, nz, ny, nx):
 
 def get_section(system, args):
     if system == "GLOENS":
-        ds = load_gloens_mean(args.npy_dir, args.grid_file, args.gloens_init, args.gloens_lead, include_currents=False)
+        ds = load_gloens_mean(args.npy_dir, args.grid_file, args.gloens_init, args.gloens_lead, include_currents=False).isel(time=0, drop=True)
         try:
             return sample(ds, "thetao", "so", "depth", "latitude", "longitude", system, args)
         finally:
