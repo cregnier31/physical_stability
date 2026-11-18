@@ -8,6 +8,7 @@ models init 20241204 lead 1.
 """
 from __future__ import annotations
 import argparse
+import csv
 from datetime import datetime, timedelta
 from pathlib import Path
 import numpy as np
@@ -115,19 +116,31 @@ def sample(ds, tname, sname, zname, latname, lonname, system, args):
         SA, CT = salt, temp
     # Density referenced to the same pressure to isolate lateral variations.
     rho = gsw.sigma0(SA, CT)
-    # Zonal spatial high-pass: subtract a running mean at each depth.
-    # Normalized convolution prevents coastal NaNs from contaminating the mean.
-    width = args.background_points
-    kernel = np.ones(width)
-    background = np.empty_like(rho)
-    for k, row in enumerate(rho):
-        finite = np.isfinite(row)
-        numerator = np.convolve(np.where(finite, row, 0), kernel, mode="same")
-        denominator = np.convolve(finite.astype(float), kernel, mode="same")
-        background[k] = np.divide(numerator, denominator, out=np.full(row.shape, np.nan),
-                                  where=denominator >= max(3, width // 3))
+    # Same physical window for every model, on a shared longitude sampling grid.
+    # Gaussian weights use great-circle distance along the transect (km).
+    # Require sufficient wet coverage; do not fill dry or missing stations.
+    station_km = 111.195 * np.cos(np.deg2rad(args.latitude)) * (np.asarray(longitude) - longitude[0])
+    spacing_km = np.median(np.abs(np.diff(station_km)))
+    if not np.isfinite(spacing_km) or spacing_km <= 0:
+        raise ValueError("Invalid or duplicate longitude sampling positions")
+    radius_km = args.background_km / 2
+    background = np.full_like(rho, np.nan)
+    for j in range(len(longitude)):
+        distances = np.abs(station_km - station_km[j])
+        weights = np.where(distances <= radius_km, 1.0, 0.0)
+        if weights.sum() < 3:
+            continue
+        finite = np.isfinite(rho)
+        weighted = finite * weights[None, :]
+        coverage = weighted.sum(axis=1) / weights.sum()
+        numerator = np.sum(np.where(finite, rho, 0.0) * weights[None, :], axis=1)
+        denominator = weighted.sum(axis=1)
+        background[:, j] = np.divide(numerator, denominator,
+                                      out=np.full(len(depth), np.nan),
+                                      where=(coverage >= args.min_coverage) & (denominator > 0))
     anomaly = rho - background
     # Positive-down depth: stable density increases with depth.
+    # Compute derivatives only where adjacent background levels are finite.
     drhodz = np.gradient(background, depth, axis=0)
     # Avoid singular displacements in weak stratification.
     eta = np.divide(-anomaly, drhodz, out=np.full_like(anomaly, np.nan),
@@ -137,7 +150,8 @@ def sample(ds, tname, sname, zname, latname, lonname, system, args):
     ep = 0.5 * n2 * eta ** 2
     ep[(n2 <= 0) | ~np.isfinite(eta)] = np.nan
     return dict(system=system, depth=depth, lon=((longitude + 180) % 360) - 180,
-                lat=latitude, eta=eta, ep=ep, n2=n2, anomaly=anomaly)
+                lat=latitude, eta=eta, ep=ep, n2=n2, anomaly=anomaly,
+                wet=wet, background=background)
 
 
 def main():
@@ -154,17 +168,20 @@ def main():
     p.add_argument("--lon-min", type=float, default=-50)
     p.add_argument("--lon-max", type=float, default=-20)
     p.add_argument("--points", type=int, default=161)
-    p.add_argument("--background-points", type=int, default=21)
+    p.add_argument("--background-km", type=float, default=200,
+                   help="Full width of the horizontal running-mean background window (km)")
+    p.add_argument("--min-coverage", type=float, default=0.7,
+                   help="Minimum fraction of valid stations in a background window")
     p.add_argument("--min-gradient", type=float, default=0.001, help="Minimum background sigma0 gradient (kg m^-4)")
-    p.add_argument("--max-depth", type=float, default=1500)
+    p.add_argument("--max-depth", type=float, default=800)
     p.add_argument("--eta-limit", type=float, default=100)
     p.add_argument("--eos", choices=("eos80", "teos10"), default="eos80")
     p.add_argument("--endpoint", default=ENDPOINT)
     p.add_argument("--authenticated", action="store_true")
     p.add_argument("--output-dir", type=Path, default=Path("imgs"))
     args = p.parse_args()
-    if args.points < 5 or args.background_points < 3 or args.background_points % 2 != 1:
-        p.error("--points >= 5 and --background-points odd and >= 3 required")
+    if args.points < 5 or args.background_km <= 0 or not 0 < args.min_coverage <= 1:
+        p.error("--points >= 5, background-km > 0 and 0 < min-coverage <= 1 required")
     if args.min_gradient <= 0 or args.eta_limit <= 0:
         p.error("Gradient and displacement limits must be positive")
     gtime = datetime.strptime(args.gloens_init, "%Y%m%d") + timedelta(days=args.gloens_lead)
@@ -175,25 +192,50 @@ def main():
     results = [get_section(s, args) for s in dict.fromkeys(args.systems)]
     fig, axs = plt.subplots(len(results), 1, figsize=(13, 3.4 * len(results)),
                             sharex=True, squeeze=False, constrained_layout=True)
+    summary = []
     for ax, result in zip(axs[:, 0], results):
+        common = (result["depth"] >= 0) & (result["depth"] <= args.max_depth)
+        eta_values = result["eta"][common]
+        ep_values = result["ep"][common]
+        finite_eta = np.isfinite(eta_values)
+        finite_ep = np.isfinite(ep_values)
+        summary.append({
+            "system": result["system"], "valid_time": (gtime if result["system"] == "GLOENS" else rtime).isoformat(),
+            "max_depth_m": args.max_depth, "background_km": args.background_km,
+            "valid_displacement_cells": int(finite_eta.sum()),
+            "displacement_rms_m": float(np.sqrt(np.mean(eta_values[finite_eta] ** 2))) if finite_eta.any() else float("nan"),
+            "displacement_std_m": float(np.std(eta_values[finite_eta])) if finite_eta.any() else float("nan"),
+            "mean_ep_proxy_J_kg": float(np.mean(ep_values[finite_ep])) if finite_ep.any() else float("nan"),
+            "valid_ep_cells": int(finite_ep.sum()),
+            "wet_cells": int(result["wet"][common].sum()),
+        })
         field = np.ma.masked_invalid(result["eta"])
         im = ax.pcolormesh(result["lon"], result["depth"], field, shading="auto",
                            cmap="RdBu_r", vmin=-args.eta_limit, vmax=args.eta_limit)
         ax.set_ylim(args.max_depth, 0)
+        ax.set_facecolor("#e0e0e0")
         ax.set_ylabel(f'{result["system"]}\nDepth (m)')
         fig.colorbar(im, ax=ax, label="Density-displacement proxy (m)", extend="both")
         ds = xr.Dataset(
             {"displacement_proxy_m": (("depth", "station"), result["eta"]),
              "potential_energy_proxy_J_kg": (("depth", "station"), result["ep"]),
              "background_n2_approx_s2": (("depth", "station"), result["n2"]),
-             "sigma0_anomaly_kg_m3": (("depth", "station"), result["anomaly"])},
+             "sigma0_anomaly_kg_m3": (("depth", "station"), result["anomaly"]),
+             "background_sigma0_kg_m3": (("depth", "station"), result["background"]),
+             "wet_mask": (("depth", "station"), result["wet"].astype(np.int8))},
             coords={"depth": result["depth"], "station": np.arange(len(result["lon"])),
                     "longitude": ("station", result["lon"]),
                     "latitude": ("station", result["lat"])},
             attrs={"model": result["system"], "valid_time": gtime.isoformat() if result["system"] == "GLOENS" else rtime.isoformat(),
-                   "eos": args.eos, "background_points": args.background_points,
+                   "eos": args.eos, "background_km": args.background_km, "min_coverage": args.min_coverage,
                    "warning": "Spatial density-displacement proxy; not a verified internal-wave signal. Sigma0 gradient is approximate."})
         ds.to_netcdf(args.output_dir / f'internal_wave_proxy_{result["system"].lower()}_{gtime:%Y%m%d}.nc')
+    csv_path = args.output_dir / f"internal_wave_proxy_summary_{gtime:%Y%m%d}.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(summary[0]))
+        writer.writeheader()
+        writer.writerows(summary)
+    print(f"Saved {csv_path}", flush=True)
     axs[-1, 0].set_xlabel("Longitude (degrees east)")
     fig.suptitle(f"North Atlantic density-displacement proxies | {gtime:%Y-%m-%d} | {args.latitude:g}°N")
     output = args.output_dir / f"internal_wave_proxy_sections_{gtime:%Y%m%d}.png"
