@@ -13,6 +13,7 @@ import xarray as xr
 from physical_stability.forecasts import ENDPOINT, forecast_store, open_cloudferro
 from physical_stability.velocity_dynamics import velocity_diagnostics, depth_kinetic_energy_psd
 from plot_oceanbench_psd import common_grid
+from physical_stability.gloens_npy import load_gloens_mean, DEFAULT_GLOENS_GRID
 
 
 def select_field(ds, candidates, depth_name, lat_name, lon_name, lead):
@@ -35,26 +36,70 @@ def process(ds, args):
         raise ValueError("Expected 1D lat, lon, depth coordinates")
     lat, lon, depth = (np.asarray(ds[n].values, float)
                        for n in (lat_name, lon_name, depth_name))
-    if any(ds[n].ndim != 1 for n in (lat_name, lon_name, depth_name)):
-        raise ValueError("Only 1D regular grid coordinates are supported")
+    if ds[depth_name].ndim != 1:
+        raise ValueError("Depth must be 1D")
+    curvilinear = ds[lat_name].ndim == ds[lon_name].ndim == 2
+    if not curvilinear and any(ds[n].ndim != 1 for n in (lat_name, lon_name)):
+        raise ValueError("Horizontal coordinates must both be 1D or both 2D")
     if not np.all(np.diff(depth) > 0):
         raise ValueError("Depth must be increasing positive-down")
-    y = np.flatnonzero((lat >= args.lat_min) & (lat <= args.lat_max))
     lon180 = (lon + 180) % 360 - 180
-    x = np.flatnonzero((lon180 >= args.lon_min) & (lon180 <= args.lon_max))
-    if len(y) < 3 or len(x) < 8:
-        raise ValueError("Insufficient regional grid coverage")
+    if curvilinear:
+        mask = ((lat >= args.lat_min) & (lat <= args.lat_max) &
+                (lon180 >= args.lon_min) & (lon180 <= args.lon_max))
+        yi, xi = np.where(mask)
+        if yi.size < 8:
+            raise ValueError("Insufficient regional grid coverage")
+        y = slice(int(yi.min()), int(yi.max()) + 1)
+        x = slice(int(xi.min()), int(xi.max()) + 1)
+    else:
+        y = np.flatnonzero((lat >= args.lat_min) & (lat <= args.lat_max))
+        x = np.flatnonzero((lon180 >= args.lon_min) & (lon180 <= args.lon_max))
+        if len(y) < 3 or len(x) < 8:
+            raise ValueError("Insufficient regional grid coverage")
+        x = x[np.argsort(lon180[x])]
     if args.max_depth is not None:
         depth_idx = np.flatnonzero(depth <= args.max_depth)
     else:
         depth_idx = np.arange(len(depth))
     if len(depth_idx) < 3:
         raise ValueError("At least three depth levels are required")
-    u = select_field(ds, ("uo", "vozocrtx", "u"), depth_name, lat_name, lon_name, args.lead)
-    v = select_field(ds, ("vo", "vomecrty", "v"), depth_name, lat_name, lon_name, args.lead)
-    u = u[np.ix_(depth_idx, y, x)]
-    v = v[np.ix_(depth_idx, y, x)]
-    source_lon, source_lat = lon180[x], lat[y]
+    if curvilinear:
+        yd, xd = ds[lat_name].dims
+        def read_current(candidates):
+            name = next((n for n in candidates if n in ds), None)
+            if name is None:
+                raise KeyError(f"Missing velocity component among {candidates}")
+            da = ds[name]
+            if "time" in da.dims:
+                da = da.isel(time=args.lead)
+            if set(da.dims) != {depth_name, yd, xd}:
+                raise ValueError(f"{name}: velocity grid does not match T-grid; "
+                                 "explicit U/V collocation required")
+            return np.asarray(da.isel({depth_name: depth_idx, yd: y, xd: x})
+                              .transpose(depth_name, yd, xd).values, float)
+        u = read_current(("uo", "vozocrtx", "u"))
+        v = read_current(("vo", "vomecrty", "v"))
+        source_lon, source_lat = lon180[y, x], lat[y, x]
+        inside = ((source_lon >= args.lon_min) & (source_lon <= args.lon_max) &
+                  (source_lat >= args.lat_min) & (source_lat <= args.lat_max))
+        u = np.where(inside[None], u, np.nan)
+        v = np.where(inside[None], v, np.nan)
+    else:
+        def read_regular(candidates):
+            name = next((n for n in candidates if n in ds), None)
+            if name is None:
+                raise KeyError(f"Missing velocity component among {candidates}")
+            da = ds[name]
+            if "time" in da.dims:
+                da = da.isel(time=args.lead)
+            if set(da.dims) != {depth_name, lat_name, lon_name}:
+                raise ValueError(f"{name}: staggered U/V grids require explicit collocation")
+            return np.asarray(da.isel({depth_name: depth_idx, lat_name: y, lon_name: x})
+                              .transpose(depth_name, lat_name, lon_name).values, float)
+        u = read_regular(("uo", "vozocrtx", "u"))
+        v = read_regular(("vo", "vomecrty", "v"))
+        source_lon, source_lat = lon180[x], lat[y]
     bounds = (args.lat_min, args.lat_max, args.lon_min, args.lon_max)
     ul, vl = [], []
     for uk, vk in zip(u, v):
@@ -80,7 +125,11 @@ def process(ds, args):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--systems", nargs="+", default=["GLONET", "GLOW", "GLO12"],
-                   choices=["GLONET", "GLOW", "GLO12"])
+                   choices=["GLONET", "GLOW", "GLO12", "GLOENS"])
+    p.add_argument("--gloens-npy-dir", default="/sortref/calval/CLASS4_scores")
+    p.add_argument("--gloens-grid-file", default=DEFAULT_GLOENS_GRID)
+    p.add_argument("--gloens-init", help="GLOENS initialization YYYYMMDD; defaults to --init")
+    p.add_argument("--gloens-lead", type=int, help="GLOENS lead; defaults to --lead")
     p.add_argument("--init", required=True, help="YYYYMMDD")
     p.add_argument("--lead", type=int, default=1)
     p.add_argument("--max-depth", type=float, default=1000)
@@ -100,10 +149,31 @@ def main():
         p.error("Lead index must be nonnegative")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output_files = []
+    from contextlib import nullcontext
+    from datetime import datetime, timedelta
     for model in args.systems:
-        with open_cloudferro(forecast_store(model, args.init), endpoint=args.endpoint,
-                             anonymous=not args.authenticated) as ds:
-            result = process(ds, args)
+        if model == "GLOENS":
+            gi = args.gloens_init or args.init
+            gl = args.gloens_lead if args.gloens_lead is not None else args.lead
+            if datetime.strptime(gi, "%Y%m%d") + timedelta(days=gl) != datetime.strptime(args.init, "%Y%m%d") + timedelta(days=args.lead):
+                raise ValueError("GLOENS and other models must have the same valid date")
+            dataset = load_gloens_mean(args.gloens_npy_dir, args.gloens_grid_file, gi, gl, include_currents=True)
+            if not {"uo", "vo"} <= set(dataset.data_vars):
+                raise ValueError("GLOENS precomputed mean lacks uo/vo currents")
+            context = nullcontext(dataset)
+        else:
+            context = open_cloudferro(forecast_store(model, args.init), endpoint=args.endpoint,
+                                      anonymous=not args.authenticated)
+        with context as ds:
+            if model == "GLOENS":
+                original_lead = args.lead
+                args.lead = 0
+                try:
+                    result = process(ds, args)
+                finally:
+                    args.lead = original_lead
+            else:
+                result = process(ds, args)
             result.attrs.update(model=model, init=args.init, lead_index=args.lead)
             path = args.output_dir / f"{model.lower()}_{args.init}_lead{args.lead}.nc"
             result.to_netcdf(path)
