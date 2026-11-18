@@ -17,12 +17,15 @@ import xarray as xr
 from physical_stability.forecasts import ENDPOINT, forecast_store, open_cloudferro
 from physical_stability.psd import zonal_psd, band_metrics
 from plot_oceanbench_psd import field_and_coords, common_grid
+from physical_stability.gloens_npy import load_gloens_mean, DEFAULT_GLOENS_GRID
 
 
 def run(args):
     starts = np.arange(np.datetime64(args.start), np.datetime64(args.end) + np.timedelta64(1, "D"),
                        np.timedelta64(1, "D"))
     models = tuple(args.systems)
+    if args.variable == "ssh" and "GLOENS" in models:
+        raise ValueError("GLOENS CLASS4 ensemble-mean files have no SSH; use --variable sst")
     bounds = (args.lat_min, args.lat_max, args.lon_min, args.lon_max)
     target_lon = np.linspace(args.lon_min, args.lon_max, args.n_lon)
     lat_middle = 0.5 * (args.lat_min + args.lat_max)
@@ -40,6 +43,8 @@ def run(args):
         stores = {}
         try:
             for model in models:
+                if model == "GLOENS":
+                    continue
                 try:
                     context = open_cloudferro(forecast_store(model, init), endpoint=args.endpoint,
                                               anonymous=not args.authenticated)
@@ -58,6 +63,23 @@ def run(args):
                             args.lat_min, args.lat_max, args.lon_min, args.lon_max, 0)
                     except Exception as exc:
                         failures.append((init, model, str(lead), str(exc)))
+                if "GLOENS" in models and len(fields) == len(models) - 1:
+                    try:
+                        ginit = (start + np.timedelta64(args.gloens_init_offset_days, "D"))
+                        ginit_str = str(ginit).replace("-", "")
+                        glead = lead - args.gloens_init_offset_days
+                        if not 0 <= glead <= 27:
+                            raise ValueError(f"GLOENS lead {glead} outside 0..27")
+                        gds = load_gloens_mean(args.gloens_npy_dir, args.gloens_grid_file,
+                                               ginit_str, glead, include_currents=False)
+                        try:
+                            fields["GLOENS"] = field_and_coords(
+                                gds, args.variable, args.lat_min, args.lat_max,
+                                args.lon_min, args.lon_max, 0)
+                        finally:
+                            gds.close()
+                    except Exception as exc:
+                        failures.append((init, "GLOENS", str(lead), str(exc)))
                 if set(fields) != set(models):
                     continue
                 try:
@@ -109,8 +131,12 @@ def run(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--variable", choices=["ssh", "sst"], default="ssh")
-    p.add_argument("--systems", nargs="+", choices=["GLONET", "GLOW", "GLO12"],
+    p.add_argument("--systems", nargs="+", choices=["GLONET", "GLOW", "GLO12", "GLOENS"],
                    default=["GLONET", "GLOW", "GLO12"])
+    p.add_argument("--gloens-npy-dir", default="/sortref/calval/CLASS4_scores")
+    p.add_argument("--gloens-grid-file", default=DEFAULT_GLOENS_GRID)
+    p.add_argument("--gloens-init-offset-days", type=int, default=0,
+                   help="GLOENS init minus regular init in days; GLOENS lead is adjusted to match valid date")
     p.add_argument("--start", required=True, help="First initialization YYYY-MM-DD")
     p.add_argument("--end", required=True, help="Last initialization YYYY-MM-DD inclusive")
     p.add_argument("--lead-start", type=int, default=0)
@@ -131,6 +157,8 @@ def main():
             not -180 <= a.lon_min < a.lon_max <= 180 or
             not -80 <= a.lat_min < a.lat_max <= 80):
         p.error("Invalid date, lead, model, grid or geographical bounds")
+    if a.variable == "ssh" and "GLOENS" in a.systems:
+        p.error("GLOENS precomputed CLASS4 means contain no SSH; use --variable sst")
     run(a)
 
 
