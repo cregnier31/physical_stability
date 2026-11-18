@@ -174,7 +174,7 @@ def _gloens_field(args, lead, init):
     return result, coords, depth
 
 
-def plot(results, output, init, lead, dpi):
+def plot(results, output, init, lead, depth_index, max_plot_points, dpi):
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     output.mkdir(parents=True, exist_ok=True)
@@ -206,7 +206,7 @@ def plot(results, output, init, lead, dpi):
                 llon, llat = np.meshgrid(lon, lat)
             else:
                 llon, llat = lon, lat
-            stride = max(1, int(np.ceil(np.sqrt(data.size / args.max_plot_points))))
+            stride = max(1, int(np.ceil(np.sqrt(data.size / max_plot_points))))
             sl = (slice(None, None, stride), slice(None, None, stride))
             valid = np.isfinite(data[sl]) & np.isfinite(llat[sl]) & np.isfinite(llon[sl])
             sc = ax.scatter(llon[sl][valid], llat[sl][valid], c=data[sl][valid],
@@ -265,7 +265,7 @@ def main():
                                                        args.max_latitude)
                 results[model] = {k: (v, lat, lon) for k, v in data.items()}
         print(f"Computed {model} at depth {depth:.1f} m", flush=True)
-    plot(results, args.output_dir / "maps", args.init, args.lead, args.dpi)
+    plot(results, args.output_dir / "maps", args.init, args.lead, args.depth_index, args.max_plot_points, args.dpi)
 
 
 if __name__ == "__main__":
