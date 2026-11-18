@@ -94,10 +94,12 @@ def main():
     p.add_argument("--endpoint", default=ENDPOINT)
     p.add_argument("--authenticated", action="store_true")
     p.add_argument("--output-dir", type=Path, default=Path("results/velocity"))
+    p.add_argument("--no-plots", action="store_true", help="Skip automatic PNG generation")
     args = p.parse_args()
     if args.lead < 0:
         p.error("Lead index must be nonnegative")
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_files = []
     for model in args.systems:
         with open_cloudferro(forecast_store(model, args.init), endpoint=args.endpoint,
                              anonymous=not args.authenticated) as ds:
@@ -105,7 +107,12 @@ def main():
             result.attrs.update(model=model, init=args.init, lead_index=args.lead)
             path = args.output_dir / f"{model.lower()}_{args.init}_lead{args.lead}.nc"
             result.to_netcdf(path)
+            output_files.append(path)
             print(f"Saved {path}", flush=True)
+    if not args.no_plots:
+        from plot_velocity_diagnostics import render
+        render(output_files, args.output_dir / "plots", (0, 5, 10))
+        print(f"Saved PNG plots under {args.output_dir / 'plots'}", flush=True)
 
 
 if __name__ == "__main__":
