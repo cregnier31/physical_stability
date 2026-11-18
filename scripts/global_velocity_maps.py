@@ -216,10 +216,10 @@ def plot(results, output, init, lead, depth_index, max_plot_points, dpi):
             ax.set_title(model, fontsize=13, weight="bold")
             axes.append(ax)
         fig.suptitle(f"Global {field.replace('_',' ').title()} | {init} | lead {lead} | "
-                     f"depth index {args.depth_index}", fontsize=15, weight="bold")
+                     f"depth index {depth_index}", fontsize=15, weight="bold")
         fig.colorbar(sc, ax=axes, orientation="horizontal", fraction=.045,
                      pad=.08, label=f"{field.replace('_',' ')} ({UNITS[field]})")
-        path = output / f"global_{field}_depth{args.depth_index}.png"
+        path = output / f"global_{field}_depth{depth_index}.png"
         fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
         plt.close(fig)
         print(f"Saved {path}", flush=True)
