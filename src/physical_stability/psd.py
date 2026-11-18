@@ -50,8 +50,8 @@ def zonal_psd(section: np.ndarray, longitude_deg: np.ndarray, latitude_deg: floa
     window = np.ones(n)
     left = q < .25
     right = q > .75
-    window[left] = 0.5 * (1 + np.cos(np.pi * (2*q[left]/.5 - 1)))
-    window[right] = 0.5 * (1 + np.cos(np.pi * (2*q[right]/.5 - 2/.5 + 1)))
+    window[left] = 0.5 * (1 + np.cos(np.pi * (q[left] / .25 - 1)))
+    window[right] = 0.5 * (1 + np.cos(np.pi * ((q[right] - .75) / .25)))
     freq = np.fft.rfftfreq(n, d=dx)
     power_rows = []
     good_fractions = []
