@@ -178,11 +178,14 @@ def plot(results, output, init, lead, depth_index, max_plot_points, dpi):
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     output.mkdir(parents=True, exist_ok=True)
+    order = ("GLONET", "GLOW", "GLO12", "GLOENS")
     for field in FIELDS:
-        panels = [(m, *values[field]) for m, values in results.items() if field in values]
-        if not panels:
+        available = [(m, *results[m][field]) for m in order
+                     if m in results and field in results[m]]
+        if not available:
             continue
-        allvalid = [a[np.isfinite(a)] for _, a, _, _ in panels if np.isfinite(a).any()]
+        allvalid = [a[np.isfinite(a)] for _, a, _, _ in available
+                    if np.isfinite(a).any()]
         if not allvalid:
             continue
         sample = np.concatenate([a[::max(1, len(a)//100000)] for a in allvalid])
@@ -191,34 +194,49 @@ def plot(results, output, init, lead, depth_index, max_plot_points, dpi):
             vmin, vmax = -max(limit, 1e-16), max(limit, 1e-16)
         else:
             vmin, vmax = 0., max(float(np.nanpercentile(sample, 98)), 1e-16)
-        fig = plt.figure(figsize=(7.0 * len(panels), 5.4))
-        axes = []
-        for i, (model, data, lat, lon) in enumerate(panels):
-            ax = fig.add_subplot(1, len(panels), i+1, projection=ccrs.EckertIV())
+        fig, axes = plt.subplots(2, 2, figsize=(14, 9),
+                                 subplot_kw={"projection": ccrs.EckertIV()})
+        last_artist = None
+        for ax, model in zip(axes.flat, order):
             ax.set_global()
             ax.add_feature(cfeature.LAND, facecolor="#b9b9b9",
-                           edgecolor="#555555", linewidth=.25, zorder=4)
-            ax.coastlines(resolution="110m", linewidth=.35, zorder=5)
+                           edgecolor="#555555", linewidth=.3, zorder=4)
+            ax.coastlines(resolution="110m", linewidth=.4, zorder=5)
             ax.gridlines(linewidth=.3, color=".5", alpha=.4)
-            # Use scatter to handle irregular curvilinear NEMO coordinates
-            # and avoid quadrilateral artifacts across the polar fold.
+            ax.set_title(model, fontsize=13, weight="bold", pad=8)
+            if model not in results or field not in results[model]:
+                reason = ("Not requested" if model not in results else
+                          "Diagnostic not available on this grid")
+                ax.text(.5, .5, reason, transform=ax.transAxes,
+                        ha="center", va="center", fontsize=10,
+                        bbox=dict(facecolor="white", alpha=.9, edgecolor="none"),
+                        zorder=8)
+                continue
+            data, lat, lon = results[model][field]
             if np.ndim(lat) == 1:
                 llon, llat = np.meshgrid(lon, lat)
             else:
                 llon, llat = lon, lat
             stride = max(1, int(np.ceil(np.sqrt(data.size / max_plot_points))))
             sl = (slice(None, None, stride), slice(None, None, stride))
-            valid = np.isfinite(data[sl]) & np.isfinite(llat[sl]) & np.isfinite(llon[sl])
-            sc = ax.scatter(llon[sl][valid], llat[sl][valid], c=data[sl][valid],
-                            s=1.1 if stride == 1 else 2.2, marker="s", linewidths=0,
-                            transform=ccrs.PlateCarree(), cmap="RdBu_r" if field in SIGNED else "viridis",
-                            vmin=vmin, vmax=vmax, rasterized=True)
-            ax.set_title(model, fontsize=13, weight="bold")
-            axes.append(ax)
+            valid = (np.isfinite(data[sl]) & np.isfinite(llat[sl]) &
+                     np.isfinite(llon[sl]))
+            if not np.any(valid):
+                continue
+            last_artist = ax.scatter(
+                llon[sl][valid], llat[sl][valid], c=data[sl][valid],
+                s=1.1 if stride == 1 else 2.2, marker="s", linewidths=0,
+                transform=ccrs.PlateCarree(),
+                cmap="RdBu_r" if field in SIGNED else "viridis",
+                vmin=vmin, vmax=vmax, rasterized=True)
         fig.suptitle(f"Global {field.replace('_',' ').title()} | {init} | lead {lead} | "
-                     f"depth index {depth_index}", fontsize=15, weight="bold")
-        fig.colorbar(sc, ax=axes, orientation="horizontal", fraction=.045,
-                     pad=.08, label=f"{field.replace('_',' ')} ({UNITS[field]})")
+                     f"depth index {depth_index}", fontsize=16, weight="bold", y=.98)
+        fig.subplots_adjust(left=.035, right=.965, top=.91, bottom=.15,
+                            wspace=.06, hspace=.12)
+        if last_artist is not None:
+            cb_ax = fig.add_axes([.27, .075, .46, .025])
+            fig.colorbar(last_artist, cax=cb_ax, orientation="horizontal",
+                         label=f"{field.replace('_', ' ')} ({UNITS[field]})")
         path = output / f"global_{field}_depth{depth_index}.png"
         fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
         plt.close(fig)
