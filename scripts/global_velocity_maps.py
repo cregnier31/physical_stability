@@ -77,43 +77,81 @@ def regular_diagnostics(u, v, lat, lon):
         "okubo_weiss": strain*strain - zeta*zeta, "rossby_number": rossby}.items()}
 
 
-def nemo_diagnostics(u, v, grid):
-    """NEMO finite-volume T-divergence and F-vorticity.
+def nemo_diagnostics(u, v, grid, max_north_lat=80.):
+    """Metric-aware C-grid strain/OW at T points, excluding polar-fold region.
 
-    Inputs are native U and V face velocities. F and T diagnostics are NOT
-    collocated; only KE at T, divergence at T and curl at F are returned.
-    Exclude outer rows/columns: correct polar-fold exchange requires NEMO
-    boundary-condition machinery.
+    Face-normal gradients are computed on native U/V points using NEMO
+    horizontal scale factors. F-point shear and curl are averaged to T
+    before forming Okubo-Weiss. These are local grid-axis derivatives:
+    they do not include curvilinear basis-rotation/Christoffel terms.
+    Accordingly the result is a metric-aware approximation, not an exact
+    covariant strain tensor on the rotated ORCA grid.
     """
     def g(name):
         return np.asarray(grid[name].squeeze(drop=True).values, float)
     e1u, e2u, e1v, e2v = (g(n) for n in ("e1u", "e2u", "e1v", "e2v"))
     e1t, e2t, e1f, e2f = (g(n) for n in ("e1t", "e2t", "e1f", "e2f"))
-    if any(a.shape != u.shape for a in (e1u, e2u, e1v, e2v, e1t, e2t, e1f, e2f)):
+    lat_t, lat_f = g("gphit"), g("gphif")
+    if any(a.shape != u.shape for a in
+           (v, e1u, e2u, e1v, e2v, e1t, e2t, e1f, e2f, lat_t, lat_f)):
         raise ValueError("NEMO metric/velocity shapes differ")
-    ke = np.full_like(u, np.nan)
-    div = np.full_like(u, np.nan)
-    curl = np.full_like(u, np.nan)
-    # Native C-grid flux differences. T(i,j) is bounded by U(i,j),U(i-1,j)
-    # and V(i,j),V(i,j-1). F curl uses adjacent U/V faces.
-    ut = .5 * (u[1:, 1:] + u[1:, :-1])
-    vt = .5 * (v[1:, 1:] + v[:-1, 1:])
-    ke[1:, 1:] = .5 * (ut**2 + vt**2)
-    div[1:, 1:] = ((e2u[1:, 1:] * u[1:, 1:] -
-                    e2u[1:, :-1] * u[1:, :-1]) +
-                   (e1v[1:, 1:] * v[1:, 1:] -
-                    e1v[:-1, 1:] * v[:-1, 1:])) / (e1t[1:, 1:] * e2t[1:, 1:])
-    curl[:-1, :-1] = ((e2v[:-1, 1:] * v[:-1, 1:] -
-                       e2v[:-1, :-1] * v[:-1, :-1]) -
-                      (e1u[1:, :-1] * u[1:, :-1] -
-                       e1u[:-1, :-1] * u[:-1, :-1])) / (e1f[:-1, :-1] * e2f[:-1, :-1])
-    for a in (ke, div, curl):
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ut = .5 * (u[1:, 1:] + u[1:, :-1])
+        vt = .5 * (v[1:, 1:] + v[:-1, 1:])
+        ke = np.full_like(u, np.nan)
+        ke[1:, 1:] = .5 * (ut**2 + vt**2)
+
+        du_dx = np.full_like(u, np.nan)
+        dv_dy = np.full_like(u, np.nan)
+        du_dx[1:, 1:] = (u[1:, 1:] - u[1:, :-1]) / e1t[1:, 1:]
+        dv_dy[1:, 1:] = (v[1:, 1:] - v[:-1, 1:]) / e2t[1:, 1:]
+        normal = du_dx - dv_dy
+
+        div = np.full_like(u, np.nan)
+        div[1:, 1:] = ((e2u[1:, 1:] * u[1:, 1:] -
+                        e2u[1:, :-1] * u[1:, :-1]) +
+                       (e1v[1:, 1:] * v[1:, 1:] -
+                        e1v[:-1, 1:] * v[:-1, 1:])) / (e1t[1:, 1:] * e2t[1:, 1:])
+
+        dvdx_f = (v[:-1, 1:] - v[:-1, :-1]) / e1f[:-1, :-1]
+        dudy_f = (u[1:, :-1] - u[:-1, :-1]) / e2f[:-1, :-1]
+        shear_f = np.full_like(u, np.nan)
+        shear_f[:-1, :-1] = dvdx_f + dudy_f
+        curl = np.full_like(u, np.nan)
+        curl[:-1, :-1] = ((e2v[:-1, 1:] * v[:-1, 1:] -
+                           e2v[:-1, :-1] * v[:-1, :-1]) -
+                          (e1u[1:, :-1] * u[1:, :-1] -
+                           e1u[:-1, :-1] * u[:-1, :-1])) / (e1f[:-1, :-1] * e2f[:-1, :-1])
+
+        # F(i,j) lies northeast of T(i,j) in this indexing convention.
+        # Average four adjacent F values onto each interior T location.
+        shear_t = np.full_like(u, np.nan)
+        curl_t = np.full_like(u, np.nan)
+        shear_t[1:-1, 1:-1] = .25 * (
+            shear_f[:-2, :-2] + shear_f[1:-1, :-2] +
+            shear_f[:-2, 1:-1] + shear_f[1:-1, 1:-1])
+        curl_t[1:-1, 1:-1] = .25 * (
+            curl[:-2, :-2] + curl[1:-1, :-2] +
+            curl[:-2, 1:-1] + curl[1:-1, 1:-1])
+        strain = np.hypot(normal, shear_t)
+        ow = strain**2 - curl_t**2
+        f = 2 * OMEGA * np.sin(np.deg2rad(lat_f))
+        rossby = np.where(np.abs(lat_f) >= 5., curl / f, np.nan)
+
+    out = {"kinetic_energy": ke, "horizontal_divergence": div,
+           "relative_vorticity": curl, "strain": strain,
+           "okubo_weiss": ow, "rossby_number": rossby}
+    for key, a in out.items():
+        lat = lat_f if key in ("relative_vorticity", "rossby_number") else lat_t
+        a[~np.isfinite(lat) | (lat > max_north_lat)] = np.nan
         a[[0, -1], :] = np.nan
         a[:, [0, -1]] = np.nan
-    # Conservative: avoid publishing non-collocated strain/OW or F-grid
-    # Rossby number as though they were T-grid values.
-    return {"kinetic_energy": ke, "horizontal_divergence": div,
-            "relative_vorticity": curl}
+        if key in ("strain", "okubo_weiss"):
+            a[:2, :] = np.nan
+            a[-2:, :] = np.nan
+            a[:, :2] = np.nan
+            a[:, -2:] = np.nan
+    return out
 
 
 def _regular_field(ds, lead, depth_index, max_lat):
@@ -126,7 +164,7 @@ def _regular_field(ds, lead, depth_index, max_lat):
     lon = np.asarray(ds[lonname].values, float)
     if lat.ndim != 1 or lon.ndim != 1:
         raise ValueError("Expected regular-grid coordinates")
-    yi = np.flatnonzero(np.isfinite(lat) & (np.abs(lat) < max_lat))
+    yi = np.flatnonzero(np.isfinite(lat) & ((lat <= max_lat) & (lat > -88.)))
     if yi.size < 3:
         raise ValueError("Insufficient latitude coverage")
     xi = np.argsort((lon + 180) % 360 - 180)
@@ -164,12 +202,12 @@ def _gloens_field(args, lead, init):
     finally:
         ds.close()
     with xr.open_dataset(args.gloens_grid_file) as grid:
-        result = nemo_diagnostics(u, v, grid)
+        result = nemo_diagnostics(u, v, grid, max_north_lat=args.max_latitude)
         lat_t = np.asarray(grid.gphit.squeeze(drop=True).values)
         lon_t = np.asarray(grid.glamt.squeeze(drop=True).values)
         lat_f = np.asarray(grid.gphif.squeeze(drop=True).values)
         lon_f = np.asarray(grid.glamf.squeeze(drop=True).values)
-    coords = {k: ((lat_f, lon_f) if k == "relative_vorticity" else (lat_t, lon_t))
+    coords = {k: ((lat_f, lon_f) if k in ("relative_vorticity", "rossby_number") else (lat_t, lon_t))
               for k in result}
     return result, coords, depth
 
@@ -263,7 +301,7 @@ def main():
     p.add_argument("--init", required=True, help="Regular model initialization YYYYMMDD")
     p.add_argument("--lead", type=int, default=1)
     p.add_argument("--depth-index", type=int, default=0)
-    p.add_argument("--max-latitude", type=float, default=88.)
+    p.add_argument("--max-latitude", type=float, default=80.)
     p.add_argument("--gloens-init", help="GLOENS initialization YYYYMMDD")
     p.add_argument("--gloens-lead", type=int)
     p.add_argument("--gloens-npy-dir", default="/sortref/calval/CLASS4_scores")
@@ -276,7 +314,7 @@ def main():
     p.add_argument("--dpi", type=int, default=180)
     p.add_argument("--output-dir", type=Path, default=Path("results/global_velocity"))
     args = p.parse_args()
-    if args.lead < 0 or args.depth_index < 0 or not 5 < args.max_latitude < 89.5 or args.max_plot_points < 1000:
+    if args.lead < 0 or args.depth_index < 0 or not 5 < args.max_latitude <= 80. or args.max_plot_points < 1000:
         p.error("Invalid lead, depth, latitude or plot point count")
     if "GLOENS" in args.systems and not args.gloens_native_uv_confirmed:
         p.error("GLOENS needs --gloens-native-uv-confirmed after verifying uo/vo grid positions")
