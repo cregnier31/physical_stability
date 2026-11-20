@@ -59,7 +59,7 @@ def plot_group(frame: pd.DataFrame, output: Path, title: str) -> None:
         upper = mean + std
         ax.fill_between(wavelength, lower, upper, color=COLORS["GLOENS"],
                         alpha=0.24, label="GLOENS mean ± 1 SD")
-        ax.loglog(wavelength, mean, color=COLORS["GLOENS"], linewidth=2.8,
+        ax.loglog(wavelength, mean, color=COLORS["GLOENS"], linewidth=1.3,
                   label=f"GLOENS mean PSD (n={values.shape[1]})")
 
     for scale in (500, 2000):
