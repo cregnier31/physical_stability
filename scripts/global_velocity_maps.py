@@ -202,7 +202,19 @@ def plot(results, depths, output, init, lead, depth_index, max_plot_points, dpi)
             ax.add_feature(cfeature.LAND, facecolor="#b9b9b9",
                            edgecolor="#555555", linewidth=.3, zorder=4)
             ax.coastlines(resolution="110m", linewidth=.4, zorder=5)
-            ax.gridlines(linewidth=.3, color=".5", alpha=.4)
+            import matplotlib.ticker as mticker
+            from cartopy.mpl.gridliner import LongitudeFormatter, LatitudeFormatter
+            gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
+                              linewidth=.45, color=".45", alpha=.55,
+                              linestyle="--")
+            gl.xlocator = mticker.FixedLocator(np.arange(-180, 181, 30))
+            gl.ylocator = mticker.FixedLocator(np.arange(-80, 81, 20))
+            gl.xformatter = LongitudeFormatter()
+            gl.yformatter = LatitudeFormatter()
+            gl.top_labels = False
+            gl.right_labels = False
+            gl.xlabel_style = {"size": 8, "color": ".3"}
+            gl.ylabel_style = {"size": 8, "color": ".3"}
             ax.set_title(f"{model}  |  {depths[model]:.1f} m" if model in depths else model,
                          fontsize=13, weight="bold", pad=8)
             if model not in results or field not in results[model]:
