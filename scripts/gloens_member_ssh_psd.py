@@ -18,6 +18,62 @@ from plot_oceanbench_psd import field_and_coords, common_grid
 
 DETERMINISTIC = ("GLONET", "GLOW", "GLO12")
 
+SSH_CANDIDATES = ("zos", "sossheig", "ssh", "sea_surface_height_above_geoid")
+LAT_CANDIDATES = ("latitude", "nav_lat", "lat", "gphit")
+LON_CANDIDATES = ("longitude", "nav_lon", "lon", "glamt")
+MEMBER_CANDIDATES = ("ens", "member", "ensemble", "realization", "number")
+TIME_CANDIDATES = ("time", "time_counter", "valid_time", "forecast_time")
+
+
+def resolve_name(ds, override, candidates, role, *, dims=False):
+    available = ds.sizes if dims else ds.variables
+    if override:
+        if override not in available:
+            raise KeyError(f"{role} {override!r} missing; available: {list(available)}")
+        return override
+    hits = [name for name in candidates if name in available]
+    if len(hits) != 1:
+        raise ValueError(f"Cannot uniquely identify {role}: candidates={hits}; "
+                         f"available={list(available)}; supply an explicit --gloens-* argument")
+    return hits[0]
+
+
+def detect_layout(ds, args):
+    ssh = resolve_name(ds, args.gloens_ssh_name, SSH_CANDIDATES, "SSH")
+    lat = resolve_name(ds, args.gloens_lat_name, LAT_CANDIDATES, "latitude")
+    lon = resolve_name(ds, args.gloens_lon_name, LON_CANDIDATES, "longitude")
+    member = resolve_name(ds, args.gloens_member_dim, MEMBER_CANDIDATES, "member dimension", dims=True)
+    time = resolve_name(ds, args.gloens_time_dim, TIME_CANDIDATES, "time dimension", dims=True)
+    da = ds[ssh]
+    if member not in da.dims or time not in da.dims:
+        raise ValueError(f"SSH dimensions {da.dims} must include {member} and {time}")
+    la, lo = ds[lat], ds[lon]
+    if la.ndim != lo.ndim or la.ndim not in (1, 2):
+        raise ValueError("Latitude and longitude must both be 1D or both be 2D")
+    if la.ndim == 2 and la.dims != lo.dims:
+        raise ValueError("Curvilinear latitude/longitude must have identical dimensions")
+    spatial = set(la.dims) | set(lo.dims)
+    if not spatial.issubset(da.dims) or len(spatial) != 2:
+        raise ValueError(f"SSH dims {da.dims} do not match spatial coords {la.dims}/{lo.dims}")
+    extra = set(da.dims) - spatial - {member, time}
+    if extra:
+        raise ValueError(f"SSH has unexpected dimensions {extra}; select a 2D surface field")
+    return dict(ssh=ssh, latitude=lat, longitude=lon, member=member, time=time)
+
+
+def canonical_member(ds, layout, member_pos, lead):
+    """Rename SSH/time and attach native geographic coordinates for field_and_coords."""
+    subset = ds.isel({layout["member"]: member_pos, layout["time"]: slice(lead, lead+1)})
+    subset = subset.rename({layout["ssh"]: "zos"} if layout["ssh"] != "zos" else {})
+    if layout["time"] != "time":
+        subset = subset.rename({layout["time"]: "time"})
+    subset = subset.assign_coords(
+        latitude=subset[layout["latitude"]],
+        longitude=subset[layout["longitude"]])
+    return subset
+
+
+
 
 def choose_members(ds, dim, n, seed):
     if dim not in ds.dims:
@@ -37,8 +93,11 @@ def main():
                    help="Original member-resolved SSH Zarr path with {init} and {end} placeholders; default is MOISICEEF 2DT-oce_fcst")
     p.add_argument("--inspect-only", action="store_true",
                    help="Open first GLOENS Zarr and print data variables, dimensions and SSH metadata without computing PSD")
-    p.add_argument("--gloens-member-dim", default="ens")
-    p.add_argument("--gloens-ssh-name", default="zos",
+    p.add_argument("--gloens-member-dim", default=None)
+    p.add_argument("--gloens-lat-name", default=None)
+    p.add_argument("--gloens-lon-name", default=None)
+    p.add_argument("--gloens-time-dim", default=None)
+    p.add_argument("--gloens-ssh-name", default=None,
                    help="SSH variable inside 2DT-oce_fcst; verify with --inspect-only")
     p.add_argument("--gloens-init-offset-days", type=int, default=1)
     p.add_argument("--n-members", type=int, default=10)
@@ -76,6 +135,7 @@ def main():
                 print(f"Variable {name}: dims={da.dims}, shape={da.shape}, attrs={dict(da.attrs)}")
             for name in ds.coords:
                 print(f"Coordinate {name}: dims={ds[name].dims}, shape={ds[name].shape}")
+            print("Detected GLOENS layout:", detect_layout(ds,a))
         return
     fields = ["init","valid_date","lead","model","member_position","member_label",
               "frequency_cpkm","psd"]
@@ -104,15 +164,14 @@ def main():
                     a.gloens_store_template.format(init=gloens_init,
                         end=(gloens_date+timedelta(days=27)).strftime("%Y%m%d")),
                     endpoint=a.endpoint, anonymous=not a.authenticated))
-                if a.gloens_ssh_name not in raw:
-                    raise KeyError(f"SSH variable {a.gloens_ssh_name!r} missing; available: {list(raw.data_vars)}")
-                members = choose_members(raw, a.gloens_member_dim, a.n_members, a.seed)
+                layout = detect_layout(raw,a)
+                members = choose_members(raw, layout["member"], a.n_members, a.seed)
                 for pos, label in members:
                     sampled_members.append(dict(init=init,gloens_init=gloens_init,
                                                 member_position=pos,member_label=label))
                 for lead in range(a.lead_start,a.lead_stop+1):
                     gloens_lead = lead-a.gloens_init_offset_days
-                    if gloens_lead < 0 or gloens_lead >= raw.sizes.get("time",0):
+                    if gloens_lead < 0 or gloens_lead >= raw.sizes.get(layout["time"],0):
                         failures.append(dict(init=init,lead=lead,error="GLOENS lead unavailable for aligned valid date"))
                         continue
                     bounds = (a.lat_min,a.lat_max,a.lon_min,a.lon_max)
@@ -124,10 +183,9 @@ def main():
                             native[(model,"")] = field_and_coords(
                                 ds.isel(time=slice(lead,lead+1)), "ssh", *bounds, 0)
                         for pos, label in members:
-                            member_ds = raw.isel({a.gloens_member_dim:pos}).rename(
-                                {a.gloens_ssh_name:"zos"} if a.gloens_ssh_name!="zos" else {})
+                            member_ds = canonical_member(raw,layout,pos,gloens_lead)
                             native[("GLOENS",label)] = field_and_coords(
-                                member_ds.isel(time=slice(gloens_lead,gloens_lead+1)),
+                                member_ds,
                                 "ssh", *bounds, 0)
                         _,lon, sampled = common_grid(native,a.n_lat,a.n_lon,bounds)
                         current = {}
