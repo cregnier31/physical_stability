@@ -111,6 +111,9 @@ def main() -> None:
                 sys.executable, str(plotter),
                 "--spectra", str(destination / "spectra.csv"),
                 "--output-dir", str(destination / "figures"),
+                "--lat-min", str(south), "--lat-max", str(north),
+                "--lon-min", str(west), "--lon-max", str(east),
+                "--region-name", name,
             ], check=False)
             if plotted.returncode != 0:
                 record(name, "plot_failed", f"Plot exit code {plotted.returncode}")
