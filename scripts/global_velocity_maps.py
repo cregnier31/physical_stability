@@ -281,6 +281,7 @@ def main():
     if "GLOENS" in args.systems and not args.gloens_native_uv_confirmed:
         p.error("GLOENS needs --gloens-native-uv-confirmed after verifying uo/vo grid positions")
     results = {}
+    depths = {}
     for model in args.systems:
         if model == "GLOENS":
             gi = args.gloens_init or args.init
