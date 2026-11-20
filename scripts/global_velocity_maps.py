@@ -253,7 +253,8 @@ def plot(results, depths, output, init, lead, depth_index, max_plot_points, dpi)
             gl.right_labels = False
             gl.xlabel_style = {"size": 8, "color": ".3"}
             gl.ylabel_style = {"size": 8, "color": ".3"}
-            ax.set_title(f"{model}  |  {depths[model]:.1f} m" if model in depths else model,
+            display_name = "GLONET3" if model == "GLOW" else model
+            ax.set_title(f"{display_name}  |  {depths[model]:.1f} m" if model in depths else display_name,
                          fontsize=13, weight="bold", pad=8)
             if model not in results or field not in results[model]:
                 reason = ("Not requested" if model not in results else
