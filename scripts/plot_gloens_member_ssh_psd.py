@@ -34,7 +34,7 @@ def add_region_inset(ax, bounds: tuple[float, float, float, float], name: str | 
                       alpha=0.5, linewidth=1.1, zorder=5)
     try:
         import cartopy.crs as ccrs
-        inset = ax.inset_axes([0.055, 0.07, 0.29, 0.25],
+        inset = ax.inset_axes([0.025, 0.035, 0.19, 0.16],
                               projection=ccrs.PlateCarree())
         inset.set_global()
         inset.set_facecolor("#EAF3F8")
@@ -43,7 +43,7 @@ def add_region_inset(ax, bounds: tuple[float, float, float, float], name: str | 
                                   transform=ccrs.PlateCarree(), **rect_style))
         inset.gridlines(draw_labels=False, linewidth=0.3, alpha=0.4)
     except ImportError:
-        inset = ax.inset_axes([0.055, 0.07, 0.29, 0.25])
+        inset = ax.inset_axes([0.025, 0.035, 0.19, 0.16])
         inset.set_facecolor("#EAF3F8")
         inset.set_xlim(-180, 180)
         inset.set_ylim(-90, 90)
