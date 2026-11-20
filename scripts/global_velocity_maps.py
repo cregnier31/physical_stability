@@ -283,7 +283,8 @@ def main():
                 data, lat, lon, depth = _regular_field(ds, args.lead, args.depth_index,
                                                        args.max_latitude)
                 results[model] = {k: (v, lat, lon) for k, v in data.items()}
-        depths[model] = depth\n        print(f"Computed {model} at depth {depth:.1f} m", flush=True)
+        depths[model] = depth
+        print(f"Computed {model} at depth {depth:.1f} m", flush=True)
     plot(results, depths, args.output_dir / "maps", args.init, args.lead, args.depth_index, args.max_plot_points, args.dpi)
 
 
