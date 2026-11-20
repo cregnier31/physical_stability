@@ -33,11 +33,14 @@ def choose_members(ds, dim, n, seed):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--gloens-store-template", required=True,
-                   help="Original member-resolved SSH Zarr path, with {init} placeholder")
+    p.add_argument("--gloens-store-template", default="MOISICEEF/glo4-ens50_ng_1d-m_{init}-{end}_2DT-oce_fcst_R{init}.zarr",
+                   help="Original member-resolved SSH Zarr path with {init} and {end} placeholders; default is MOISICEEF 2DT-oce_fcst")
+    p.add_argument("--inspect-only", action="store_true",
+                   help="Open first GLOENS Zarr and print data variables, dimensions and SSH metadata without computing PSD")
     p.add_argument("--gloens-member-dim", default="ens")
-    p.add_argument("--gloens-ssh-name", default="zos")
-    p.add_argument("--gloens-init-offset-days", type=int, default=0)
+    p.add_argument("--gloens-ssh-name", default="zos",
+                   help="SSH variable inside 2DT-oce_fcst; verify with --inspect-only")
+    p.add_argument("--gloens-init-offset-days", type=int, default=1)
     p.add_argument("--n-members", type=int, default=10)
     p.add_argument("--seed", type=int, default=2024)
     p.add_argument("--start", default="2024-01-03")
@@ -61,6 +64,19 @@ def main():
         a.n_lon<8 or a.n_lat<3 or not 0<a.min_valid_fraction<=1):
         p.error("Invalid store template, member count, lead, grid or coverage")
     a.output_dir.mkdir(parents=True, exist_ok=True)
+    if a.inspect_only:
+        first = datetime.strptime(a.start, "%Y-%m-%d")+timedelta(days=a.gloens_init_offset_days)
+        store = a.gloens_store_template.format(
+            init=first.strftime("%Y%m%d"),
+            end=(first+timedelta(days=27)).strftime("%Y%m%d"))
+        print("Inspecting",store,flush=True)
+        with open_cloudferro(store,endpoint=a.endpoint,anonymous=not a.authenticated) as ds:
+            print("Dimensions:",dict(ds.sizes))
+            for name, da in ds.data_vars.items():
+                print(f"Variable {name}: dims={da.dims}, shape={da.shape}, attrs={dict(da.attrs)}")
+            for name in ds.coords:
+                print(f"Coordinate {name}: dims={ds[name].dims}, shape={ds[name].shape}")
+        return
     fields = ["init","valid_date","lead","model","member_position","member_label",
               "frequency_cpkm","psd"]
     metrics_fields = ["init","valid_date","lead","model","member_position","member_label",
@@ -85,7 +101,8 @@ def main():
                     forecast_store(model, init), endpoint=a.endpoint,
                     anonymous=not a.authenticated)) for model in DETERMINISTIC}
                 raw = stack.enter_context(open_cloudferro(
-                    a.gloens_store_template.format(init=gloens_init),
+                    a.gloens_store_template.format(init=gloens_init,
+                        end=(gloens_date+timedelta(days=27)).strftime("%Y%m%d")),
                     endpoint=a.endpoint, anonymous=not a.authenticated))
                 if a.gloens_ssh_name not in raw:
                     raise KeyError(f"SSH variable {a.gloens_ssh_name!r} missing; available: {list(raw.data_vars)}")
