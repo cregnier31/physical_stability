@@ -20,7 +20,45 @@ COLORS = {"GLONET": "#0072B2", "GLOW": "#009E73", "GLO12": "#D55E00",
           "GLOENS": "#7B3294"}
 
 
-def plot_group(frame: pd.DataFrame, output: Path, title: str) -> None:
+def add_region_inset(ax, bounds: tuple[float, float, float, float], name: str | None) -> None:
+    """Show selected lon/lat rectangle on a small global locator map.
+
+    Cartopy coastlines are used if installed; a graticule locator is the
+    dependency-free fallback. Bounds are (south, north, west, east).
+    """
+    from matplotlib.patches import Rectangle
+    south, north, west, east = bounds
+    if not (-90 <= south < north <= 90 and -180 <= west < east <= 180):
+        raise ValueError(f"Invalid region bounds: {bounds}")
+    rect_style = dict(facecolor="#E64B35", edgecolor="#8B1A1A",
+                      alpha=0.5, linewidth=1.1, zorder=5)
+    try:
+        import cartopy.crs as ccrs
+        inset = ax.inset_axes([0.055, 0.07, 0.29, 0.25],
+                              projection=ccrs.PlateCarree())
+        inset.set_global()
+        inset.set_facecolor("#EAF3F8")
+        inset.coastlines(resolution="110m", linewidth=0.45)
+        inset.add_patch(Rectangle((west, south), east-west, north-south,
+                                  transform=ccrs.PlateCarree(), **rect_style))
+        inset.gridlines(draw_labels=False, linewidth=0.3, alpha=0.4)
+    except ImportError:
+        inset = ax.inset_axes([0.055, 0.07, 0.29, 0.25])
+        inset.set_facecolor("#EAF3F8")
+        inset.set_xlim(-180, 180)
+        inset.set_ylim(-90, 90)
+        inset.set_aspect("auto")
+        inset.set_xticks([-180, -90, 0, 90, 180])
+        inset.set_yticks([-60, 0, 60])
+        inset.grid(linewidth=0.35, alpha=0.5)
+        inset.add_patch(Rectangle((west, south), east-west, north-south,
+                                  **rect_style))
+        inset.tick_params(labelsize=5, length=1)
+    inset.set_title(name or "Study region", fontsize=8, pad=2)
+    inset.set_zorder(10)
+
+
+def plot_group(frame: pd.DataFrame, output: Path, title: str, bounds=None, region_name=None) -> None:
     fig, ax = plt.subplots(figsize=(10.5, 6.5))
     deterministic = ["GLONET", "GLOW", "GLO12"]
     for model in deterministic:
@@ -73,6 +111,8 @@ def plot_group(frame: pd.DataFrame, output: Path, title: str) -> None:
     ax.invert_xaxis()
     ax.grid(True, which="both", alpha=0.2)
     ax.legend(loc="best", fontsize=9)
+    if bounds is not None:
+        add_region_inset(ax, bounds, region_name)
     fig.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=200, bbox_inches="tight")
@@ -88,7 +128,16 @@ def main() -> None:
                    default=Path("results/gloens_ssh_test/figures"))
     p.add_argument("--init", help="Optional initialization YYYYMMDD")
     p.add_argument("--lead", type=int, help="Optional forecast lead")
+    p.add_argument("--lat-min", type=float)
+    p.add_argument("--lat-max", type=float)
+    p.add_argument("--lon-min", type=float)
+    p.add_argument("--lon-max", type=float)
+    p.add_argument("--region-name", help="Label for the locator map")
     a = p.parse_args()
+    coords = (a.lat_min, a.lat_max, a.lon_min, a.lon_max)
+    if any(x is not None for x in coords) and not all(x is not None for x in coords):
+        p.error("Specify all four bounds: --lat-min, --lat-max, --lon-min, --lon-max")
+    bounds = coords if all(x is not None for x in coords) else None
 
     df = pd.read_csv(a.spectra, dtype={"init": str, "model": str,
                                       "member_label": str})
@@ -106,7 +155,8 @@ def main() -> None:
     for (init, lead, valid_date), group in df.groupby(
             ["init", "lead", "valid_date"], sort=True):
         plot_group(group, a.output_dir / f"ssh_psd_{init}_lead{int(lead):02d}.png",
-                   f"SSH zonal PSD | init {init} | valid {valid_date} | lead {int(lead)}")
+                   f"SSH zonal PSD | init {init} | valid {valid_date} | lead {int(lead)}",
+                   bounds=bounds, region_name=a.region_name)
 
 
 if __name__ == "__main__":
