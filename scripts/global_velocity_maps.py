@@ -174,7 +174,7 @@ def _gloens_field(args, lead, init):
     return result, coords, depth
 
 
-def plot(results, output, init, lead, depth_index, max_plot_points, dpi):
+def plot(results, depths, output, init, lead, depth_index, max_plot_points, dpi):
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     output.mkdir(parents=True, exist_ok=True)
@@ -203,7 +203,7 @@ def plot(results, output, init, lead, depth_index, max_plot_points, dpi):
                            edgecolor="#555555", linewidth=.3, zorder=4)
             ax.coastlines(resolution="110m", linewidth=.4, zorder=5)
             ax.gridlines(linewidth=.3, color=".5", alpha=.4)
-            ax.set_title(model, fontsize=13, weight="bold", pad=8)
+            ax.set_title(f"{model}  |  {depths[model]:.1f} m" if model in depths else model,\n                         fontsize=13, weight="bold", pad=8)
             if model not in results or field not in results[model]:
                 reason = ("Not requested" if model not in results else
                           "Diagnostic not available on this grid")
@@ -230,7 +230,7 @@ def plot(results, output, init, lead, depth_index, max_plot_points, dpi):
                 cmap="RdBu_r" if field in SIGNED else "viridis",
                 vmin=vmin, vmax=vmax, rasterized=True)
         fig.suptitle(f"Global {field.replace('_',' ').title()} | {init} | lead {lead} | "
-                     f"depth index {depth_index}", fontsize=16, weight="bold", y=.98)
+                     "near-surface velocity" if depth_index == 0 else f"depth index {depth_index}", fontsize=16, weight="bold", y=.98)
         fig.subplots_adjust(left=.035, right=.965, top=.91, bottom=.15,
                             wspace=.06, hspace=.12)
         if last_artist is not None:
@@ -282,8 +282,8 @@ def main():
                 data, lat, lon, depth = _regular_field(ds, args.lead, args.depth_index,
                                                        args.max_latitude)
                 results[model] = {k: (v, lat, lon) for k, v in data.items()}
-        print(f"Computed {model} at depth {depth:.1f} m", flush=True)
-    plot(results, args.output_dir / "maps", args.init, args.lead, args.depth_index, args.max_plot_points, args.dpi)
+        depths[model] = depth\n        print(f"Computed {model} at depth {depth:.1f} m", flush=True)
+    plot(results, depths, args.output_dir / "maps", args.init, args.lead, args.depth_index, args.max_plot_points, args.dpi)
 
 
 if __name__ == "__main__":
