@@ -203,7 +203,8 @@ def plot(results, depths, output, init, lead, depth_index, max_plot_points, dpi)
                            edgecolor="#555555", linewidth=.3, zorder=4)
             ax.coastlines(resolution="110m", linewidth=.4, zorder=5)
             ax.gridlines(linewidth=.3, color=".5", alpha=.4)
-            ax.set_title(f"{model}  |  {depths[model]:.1f} m" if model in depths else model,\n                         fontsize=13, weight="bold", pad=8)
+            ax.set_title(f"{model}  |  {depths[model]:.1f} m" if model in depths else model,
+                         fontsize=13, weight="bold", pad=8)
             if model not in results or field not in results[model]:
                 reason = ("Not requested" if model not in results else
                           "Diagnostic not available on this grid")
