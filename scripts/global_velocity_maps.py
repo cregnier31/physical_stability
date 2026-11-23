@@ -212,7 +212,7 @@ def _gloens_field(args, lead, init):
     return result, coords, depth
 
 
-def plot(results, depths, output, init, lead, depth_index, max_plot_points, dpi):
+def plot(results, depths, output, init, lead, depth_index, max_plot_points, dpi, title_label=None):
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
     output.mkdir(parents=True, exist_ok=True)
@@ -281,8 +281,12 @@ def plot(results, depths, output, init, lead, depth_index, max_plot_points, dpi)
                 transform=ccrs.PlateCarree(),
                 cmap="RdBu_r" if field in SIGNED else "viridis",
                 vmin=vmin, vmax=vmax, rasterized=True)
-        fig.suptitle(f"Global {field.replace('_',' ').title()} | {init} | lead {lead} | "
-                     "near-surface velocity" if depth_index == 0 else f"depth index {depth_index}", fontsize=16, weight="bold", y=.98)
+        heading = (f"Global {field.replace('_', ' ').title()} | {title_label} | lead {lead}"
+                   if title_label else
+                   f"Global {field.replace('_', ' ').title()} | {init} | lead {lead}")
+        fig.suptitle(heading + ( " | near-surface velocity" if depth_index == 0
+                                 else f" | depth index {depth_index}"),
+                     fontsize=16, weight="bold", y=.98)
         fig.subplots_adjust(left=.035, right=.965, top=.91, bottom=.15,
                             wspace=.06, hspace=.12)
         if last_artist is not None:
