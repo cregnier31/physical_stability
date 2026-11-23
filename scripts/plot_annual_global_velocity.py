@@ -36,8 +36,10 @@ def main():
         ax.set_xlabel("Forecast lead index (not necessarily elapsed days)")
         ax.set_ylabel(f"Area-weighted spatial RMS ({UNITS[metric]})")
         ax.grid(alpha=.25)
-        ax.legend(ncol=4, loc="best")
-        fig.tight_layout()
+        handles, labels = ax.get_legend_handles_labels()
+        fig.legend(handles, labels, ncol=min(4, len(labels)), loc="lower center",
+                   bbox_to_anchor=(0.5, 0.015), frameon=False)
+        fig.tight_layout(rect=(0, 0.10, 1, 1))
         fig.savefig(args.output_dir / f"annual_{metric}_rms.png", dpi=180)
         plt.close(fig)
     print(f"Saved plots to {args.output_dir}")
