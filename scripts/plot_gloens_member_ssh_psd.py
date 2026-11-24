@@ -100,7 +100,7 @@ def plot_group(frame: pd.DataFrame, output: Path, title: str, bounds=None, regio
         ax.loglog(wavelength, mean, color=COLORS["GLOENS"], linewidth=1.3,
                   label=f"GLOENS mean PSD (n={values.shape[1]})")
 
-    for scale in (500, 2000):
+    for scale in (100, 500, 2000):
         ax.axvline(scale, color="0.45", linestyle="--", linewidth=1)
         ax.text(scale, 0.02, f"{scale:,} km", rotation=90,
                 transform=ax.get_xaxis_transform(), ha="right", va="bottom",
