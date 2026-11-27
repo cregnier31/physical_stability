@@ -28,8 +28,14 @@ def add_region_inset(ax, bounds: tuple[float, float, float, float], name: str | 
     """
     from matplotlib.patches import Rectangle
     south, north, west, east = bounds
-    if not (-90 <= south < north <= 90 and -180 <= west < east <= 180):
+    if not (-90 <= south < north <= 90 and 0 < east - west <= 360):
         raise ValueError(f"Invalid region bounds: {bounds}")
+    width = east - west
+    west = (west + 180) % 360 - 180
+    east = west + width
+    pieces = [(west, min(east, 180))]
+    if east > 180:
+        pieces.append((-180, east - 360))
     rect_style = dict(facecolor="#E64B35", edgecolor="#8B1A1A",
                       alpha=0.5, linewidth=1.1, zorder=5)
     try:
@@ -39,8 +45,9 @@ def add_region_inset(ax, bounds: tuple[float, float, float, float], name: str | 
         inset.set_global()
         inset.set_facecolor("#EAF3F8")
         inset.coastlines(resolution="110m", linewidth=0.45)
-        inset.add_patch(Rectangle((west, south), east-west, north-south,
-                                  transform=ccrs.PlateCarree(), **rect_style))
+        for left, right in pieces:
+            inset.add_patch(Rectangle((left, south), right-left, north-south,
+                                      transform=ccrs.PlateCarree(), **rect_style))
         inset.gridlines(draw_labels=False, linewidth=0.3, alpha=0.4)
     except ImportError:
         inset = ax.inset_axes([0.025, 0.035, 0.19, 0.16])
@@ -51,8 +58,9 @@ def add_region_inset(ax, bounds: tuple[float, float, float, float], name: str | 
         inset.set_xticks([-180, -90, 0, 90, 180])
         inset.set_yticks([-60, 0, 60])
         inset.grid(linewidth=0.35, alpha=0.5)
-        inset.add_patch(Rectangle((west, south), east-west, north-south,
-                                  **rect_style))
+        for left, right in pieces:
+            inset.add_patch(Rectangle((left, south), right-left, north-south,
+                                      **rect_style))
         inset.tick_params(labelsize=5, length=1)
     inset.set_title(name or "Study region", fontsize=8, pad=2)
     inset.set_zorder(10)
