@@ -7,12 +7,29 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from plot_gloens_member_ssh_psd import add_region_inset
+
+# Keep plotting independent of forecast and xrft dependencies.
+REGIONS = {
+    'Atlantic_Tropical': (-20,20,-70,20),
+    'Atlantic_Midlatitude_N': (20,60,-70,20),
+    'Atlantic_Midlatitude_S': (-40,-20,-70,20),
+    'Pacific_Tropical': (-20,20,120,290),
+    'Pacific_Midlatitude_N': (20,60,120,290),
+    'Pacific_Midlatitude_S': (-40,-20,120,290),
+    'Indian_Tropical': (-20,20,20,120),
+    'Indian_Midlatitude_S': (-40,-20,20,120),
+    'Arctic': (60,89,-180,180),
+    'Southern': (-70,-40,-180,180),
+}
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--input-dir",type=Path,required=True)
     p.add_argument("--output-dir",type=Path,required=True)
     p.add_argument("--lead",type=int,default=1)
+    p.add_argument('--southern-lat-min', type=float, choices=[-70,-60], default=-60,
+                   help='Southern boundary used in computation; use -70 for older workflows')
     a=p.parse_args()
     paths=sorted(a.input_dir.glob(f"*_lead{a.lead:02d}.csv"))
     if not paths: p.error("No completed case files")
@@ -30,6 +47,11 @@ def main():
             ax.text(scale,.02,f"{scale:,} km",rotation=90,transform=ax.get_xaxis_transform(),ha="right",va="bottom")
         ax.invert_xaxis();ax.grid(True,which="both",alpha=.2)
         ax.set(xlabel="Zonal wavelength (km)",ylabel="SSH PSD (m² km)",title=f"{region} | lead {a.lead} | {g.init.nunique()} initializations")
+        bounds = REGIONS.get(region)
+        if region == 'Southern':
+            bounds = (a.southern_lat_min,-40,-180,180)
+        if bounds is not None:
+            add_region_inset(ax, bounds, region.replace('_', ' '))
         fig.legend(*ax.get_legend_handles_labels(),loc="lower center",ncol=4,frameon=False,fontsize=9)
         fig.tight_layout(rect=(0,.09,1,1))
         fig.savefig(a.output_dir/f"{region}_lead{a.lead:02d}.png",dpi=200)
