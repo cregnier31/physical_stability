@@ -47,7 +47,7 @@ def spectrum(v,lat,lon,bounds):
     da=xr.DataArray(np.stack([rows[i] for i in selected]).astype("float32"),
         dims=("lat","lon"),coords={"lon":np.arange(length)*dx*1000})
     ps=xrft.power_spectrum(da,dim=["lon"],detrend="linear",window="tukey",
-        nfactor=2,window_correction=True,true_amplitude=True,truncate=True)
+        window_correction=True,true_amplitude=True,truncate=True)
     ps=ps.mean("lat",skipna=True)
     ps=ps.sel(freq_lon=ps.freq_lon>0).compute()
     return ps.freq_lon.values*1000,ps.values/1000,len(selected),dx
